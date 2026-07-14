@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	daemonclient "github.com/dewebprotocol/malt-client/internal/gateway"
+	gatewayclient "github.com/dewebprotocol/malt-client/client"
 	"github.com/spf13/cobra"
 )
 
@@ -23,6 +23,7 @@ var (
 	addIgnoreFileFlags  []string
 	addRootFlag         string
 	addAliasFlag        string
+	addJSONFlag         bool
 )
 
 func init() {
@@ -40,6 +41,7 @@ func init() {
 	addCmd.Flags().StringArrayVar(&addIgnoreFileFlags, "ignore-file", nil, "Additional gitignore-style ignore file to apply while adding directories")
 	addCmd.Flags().StringVar(&addRootFlag, "root", "", "Base root CID to add files under (creates a new root if empty)")
 	addCmd.Flags().StringVar(&addAliasFlag, "alias", "", "Trusted-root alias to update; the result is recorded as an untrusted candidate")
+	addCmd.Flags().BoolVar(&addJSONFlag, "json", false, "Emit the candidate-root summary as JSON")
 }
 
 var addCmd = &cobra.Command{
@@ -93,7 +95,7 @@ func runAdd(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	var daemon *daemonclient.Client
+	var remote *gatewayclient.Client
 	workingRoot := strings.TrimSpace(addRootFlag)
 	var candidateStoreAlias string
 	if opts.Target == addTargetMerkleDAG && (workingRoot != "" || strings.TrimSpace(addAliasFlag) != "") {
@@ -115,15 +117,15 @@ func runAdd(cmd *cobra.Command, args []string) error {
 		candidateStoreAlias = record.Alias
 	}
 	if opts.Target == addTargetMALT {
-		daemon, err = gatewayClient()
+		remote, err = gatewayClient()
 		if err != nil {
 			return err
 		}
 	}
 
-	result, err := addInputsWithUnixFS(ctx, daemon, casClient, args, workingRoot, opts)
+	result, err := addInputsWithUnixFS(ctx, remote, casClient, args, workingRoot, opts)
 	if err != nil {
-		var apiErr *daemonclient.Error
+		var apiErr *gatewayclient.Error
 		if errors.As(err, &apiErr) {
 			return daemonCommandError(err)
 		}
@@ -160,7 +162,11 @@ func runAdd(cmd *cobra.Command, args []string) error {
 		Arcs:             result.Arcs,
 		SymlinkRoots:     result.SymlinkRoots,
 	}
-	fmt.Print(formatAddSummary(summary))
+	if addJSONFlag {
+		printJSON(summary)
+	} else {
+		fmt.Print(formatAddSummary(summary))
+	}
 	return nil
 }
 

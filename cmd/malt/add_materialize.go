@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	malt "github.com/dewebprotocol/malt"
-	gatewayclient "github.com/dewebprotocol/malt-client/internal/gateway"
+	gatewayclient "github.com/dewebprotocol/malt-client/client"
 	unixfsmodel "github.com/dewebprotocol/malt-client/unixfs/model"
 	unixfs "github.com/dewebprotocol/malt-client/unixfs/sdk"
 	"github.com/dewebprotocol/malt/protocol"

@@ -1,5 +1,6 @@
 // Package daemon exposes the trusted client's local control plane. It listens
-// on a user-owned Unix socket and never exposes a remote verification service.
+// on a user-owned Unix socket or Windows named pipe and never exposes a remote
+// verification service.
 package daemon
 
 import (
@@ -9,12 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
-	"os"
-	"path/filepath"
-	"strings"
-	"time"
 
 	"github.com/dewebprotocol/malt-client/internal/truststore"
 )
@@ -44,27 +40,6 @@ func NewWithInstance(store *truststore.Store, instance string) (*Server, error) 
 }
 
 func (s *Server) Handler() http.Handler { return s.mux }
-
-func (s *Server) Listen(socketPath string) (net.Listener, error) {
-	if strings.TrimSpace(socketPath) == "" {
-		return nil, fmt.Errorf("daemon socket path is empty")
-	}
-	if err := os.MkdirAll(filepath.Dir(socketPath), 0o700); err != nil {
-		return nil, err
-	}
-	if err := removeStaleSocket(socketPath); err != nil {
-		return nil, err
-	}
-	listener, err := net.Listen("unix", socketPath)
-	if err != nil {
-		return nil, err
-	}
-	if err := os.Chmod(socketPath, 0o600); err != nil {
-		_ = listener.Close()
-		return nil, err
-	}
-	return listener, nil
-}
 
 func (s *Server) routes() {
 	s.mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
@@ -139,25 +114,6 @@ func (s *Server) routes() {
 	})
 }
 
-func removeStaleSocket(path string) error {
-	info, err := os.Lstat(path)
-	if os.IsNotExist(err) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	if info.Mode()&os.ModeSocket == 0 {
-		return fmt.Errorf("refusing to replace non-socket path %s", path)
-	}
-	conn, dialErr := net.DialTimeout("unix", path, 250*time.Millisecond)
-	if dialErr == nil {
-		_ = conn.Close()
-		return fmt.Errorf("refusing to replace live socket %s", path)
-	}
-	return os.Remove(path)
-}
-
 func decodeJSON(r *http.Request, target any) error {
 	defer r.Body.Close()
 	data, err := io.ReadAll(io.LimitReader(r.Body, (1<<20)+1))
@@ -182,6 +138,8 @@ func writeStoreError(w http.ResponseWriter, err error) {
 	status := http.StatusBadRequest
 	if errors.Is(err, truststore.ErrNotFound) || errors.Is(err, truststore.ErrCandidateNotFound) {
 		status = http.StatusNotFound
+	} else if errors.Is(err, truststore.ErrStaleCandidate) {
+		status = http.StatusConflict
 	}
 	writeJSON(w, status, map[string]string{"error": err.Error()})
 }

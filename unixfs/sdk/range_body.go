@@ -74,10 +74,14 @@ func matchingRangeStep(pl prooflist.ProofList, start, end uint64) (prooflist.Ste
 		if step.Kind != prooflist.KindListRange {
 			continue
 		}
-		if step.Start == nil || step.End == nil {
+		if step.Start == nil {
 			continue
 		}
-		if *step.Start == start && *step.End == end {
+		endMatches := step.End != nil && *step.End == end
+		if step.End == nil && step.TotalSize != nil && *step.TotalSize == end {
+			endMatches = true
+		}
+		if *step.Start == start && endMatches {
 			return step, true
 		}
 	}

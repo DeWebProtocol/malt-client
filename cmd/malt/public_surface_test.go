@@ -8,7 +8,7 @@ import (
 )
 
 func TestRootCommandExposesClientApplicationsOnly(t *testing.T) {
-	want := []string{"add", "daemon", "init", "resolve", "root", "verify"}
+	want := []string{"add", "cat", "daemon", "init", "merkledag", "resolve", "rm", "root", "stat", "verify"}
 	var got []string
 	for _, command := range rootCmd.Commands() {
 		if !command.Hidden {
@@ -32,5 +32,20 @@ func TestDaemonLifecycleCommandsSuppressCobraNoise(t *testing.T) {
 func TestAddExposesBothAuthenticationTargets(t *testing.T) {
 	if addCmd.Flag("target") == nil || addCmd.Flag("file-layout") == nil || addCmd.Flag("dir-layout") == nil {
 		t.Fatal("add command does not expose Merkle DAG target/layout flags")
+	}
+}
+
+func TestContentCommandsExposeStableRangeAndCandidateContracts(t *testing.T) {
+	if statCmd.Use != "stat <trusted-root|alias> [path]" {
+		t.Fatalf("stat use = %q", statCmd.Use)
+	}
+	if catCmd.Flag("offset") == nil || catCmd.Flag("length") == nil {
+		t.Fatal("cat command does not expose paired range flags")
+	}
+	if rmCmd.Use != "rm <trusted-root|alias> <path>" {
+		t.Fatalf("rm use = %q", rmCmd.Use)
+	}
+	if merkleDAGResolveCmd.Use != "resolve <trusted-root-cid> [path]" || merkleDAGCatCmd.Flag("offset") == nil || merkleDAGCatCmd.Flag("length") == nil {
+		t.Fatal("Merkle DAG compatibility command contract is incomplete")
 	}
 }

@@ -20,6 +20,7 @@ import (
 var (
 	ErrNotFound          = errors.New("trusted-root alias not found")
 	ErrCandidateNotFound = errors.New("candidate root not found")
+	ErrStaleCandidate    = errors.New("candidate is based on a stale accepted root")
 )
 
 type Candidate struct {
@@ -126,6 +127,9 @@ func (s *Store) AddCandidate(alias, root, baseRoot, source string) (Record, erro
 	if _, err := cid.Parse(root); err != nil {
 		return Record{}, fmt.Errorf("invalid candidate root: %w", err)
 	}
+	if _, err := cid.Parse(baseRoot); err != nil {
+		return Record{}, fmt.Errorf("invalid candidate base root: %w", err)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	unlock, err := s.lockAndReload()
@@ -136,6 +140,9 @@ func (s *Store) AddCandidate(alias, root, baseRoot, source string) (Record, erro
 	record, ok := s.state.Roots[alias]
 	if !ok {
 		return Record{}, ErrNotFound
+	}
+	if baseRoot != record.AcceptedRoot {
+		return Record{}, fmt.Errorf("%w: candidate base %s, accepted root %s", ErrStaleCandidate, baseRoot, record.AcceptedRoot)
 	}
 	if root == record.AcceptedRoot {
 		return cloneRecord(record), nil
@@ -164,15 +171,20 @@ func (s *Store) AcceptCandidate(alias, root, source string) (Record, error) {
 	if !ok {
 		return Record{}, ErrNotFound
 	}
+	var candidate Candidate
 	found := false
-	for _, candidate := range record.Candidates {
-		if candidate.Root == root {
+	for _, value := range record.Candidates {
+		if value.Root == root {
+			candidate = value
 			found = true
 			break
 		}
 	}
 	if !found {
 		return Record{}, ErrCandidateNotFound
+	}
+	if candidate.BaseRoot == "" || candidate.BaseRoot != record.AcceptedRoot {
+		return Record{}, fmt.Errorf("%w: candidate base %q, accepted root %s", ErrStaleCandidate, candidate.BaseRoot, record.AcceptedRoot)
 	}
 	record.PreviousRoot = record.AcceptedRoot
 	record.AcceptedRoot = root

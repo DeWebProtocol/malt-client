@@ -10,6 +10,7 @@ import (
 
 const testRoot = "bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku"
 const candidateRoot = "bafkreib6u4dvknbd5g7pp7z2ex2jvdkbo3hytm5v6hlx3q3iibgfk5j5wi"
+const secondCandidateRoot = "bafkqaaa"
 
 func TestCandidateRequiresExplicitAcceptance(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "roots.json")
@@ -46,6 +47,58 @@ func TestCandidateRequiresExplicitAcceptance(t *testing.T) {
 	}
 	if _, err := reopened.AcceptCandidate("docs", testRoot, "rollback"); !errors.Is(err, ErrCandidateNotFound) {
 		t.Fatalf("unexpected rollback acceptance error: %v", err)
+	}
+}
+
+func TestAddCandidateRejectsStaleBaseAfterAcceptedRootAdvances(t *testing.T) {
+	store, err := Open(filepath.Join(t.TempDir(), "roots.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Trust("docs", testRoot, "unixfs", "", "manual"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Trust("docs", candidateRoot, "unixfs", "", "concurrent-update"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.AddCandidate("docs", secondCandidateRoot, testRoot, "stale-operation"); !errors.Is(err, ErrStaleCandidate) {
+		t.Fatalf("AddCandidate stale error = %v, want ErrStaleCandidate", err)
+	}
+	record, err := store.Get("docs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.AcceptedRoot != candidateRoot || len(record.Candidates) != 0 {
+		t.Fatalf("stale add changed record: %#v", record)
+	}
+}
+
+func TestAcceptCandidateRejectsStaleSibling(t *testing.T) {
+	store, err := Open(filepath.Join(t.TempDir(), "roots.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Trust("docs", testRoot, "unixfs", "", "manual"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.AddCandidate("docs", candidateRoot, testRoot, "first"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.AddCandidate("docs", secondCandidateRoot, testRoot, "second"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.AcceptCandidate("docs", secondCandidateRoot, "manual"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.AcceptCandidate("docs", candidateRoot, "manual"); !errors.Is(err, ErrStaleCandidate) {
+		t.Fatalf("AcceptCandidate stale error = %v, want ErrStaleCandidate", err)
+	}
+	record, err := store.Get("docs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.AcceptedRoot != secondCandidateRoot || record.PreviousRoot != testRoot {
+		t.Fatalf("stale acceptance changed record: %#v", record)
 	}
 }
 
