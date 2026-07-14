@@ -60,23 +60,34 @@ func (f *addIgnoreFilter) LoadDirectoryRules(localDir string) error {
 	return f.loadDirectoryRules(localDir)
 }
 
+func (f *addIgnoreFilter) LoadDirectoryRulesRooted(localDir string, readFile func(name string) ([]byte, error)) error {
+	if readFile == nil {
+		return fmt.Errorf("rooted ignore reader is nil")
+	}
+	absDir, baseRel, alreadyLoaded, err := f.beginDirectoryRules(localDir)
+	if err != nil || alreadyLoaded {
+		return err
+	}
+	if !f.noGitignore {
+		if err := f.loadRootedRuleFile(baseRel, filepath.Join(absDir, addGitignoreName), addGitignoreName, readFile); err != nil {
+			return err
+		}
+	}
+	if !f.noMaltignore {
+		if err := f.loadRootedRuleFile(baseRel, filepath.Join(absDir, addMaltignoreName), addMaltignoreName, readFile); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (f *addIgnoreFilter) Ignored(localPath string, isDir bool) (bool, error) {
 	return f.ignored(localPath, isDir)
 }
 
 func (f *addIgnoreFilter) loadDirectoryRules(localDir string) error {
-	absDir, err := filepath.Abs(localDir)
-	if err != nil {
-		return fmt.Errorf("resolve ignore directory %q: %w", localDir, err)
-	}
-	absDir = filepath.Clean(absDir)
-	if _, ok := f.loadedByDir[absDir]; ok {
-		return nil
-	}
-	f.loadedByDir[absDir] = struct{}{}
-
-	baseRel, err := f.relativePath(absDir)
-	if err != nil {
+	absDir, baseRel, alreadyLoaded, err := f.beginDirectoryRules(localDir)
+	if err != nil || alreadyLoaded {
 		return err
 	}
 	if !f.noGitignore {
@@ -92,6 +103,34 @@ func (f *addIgnoreFilter) loadDirectoryRules(localDir string) error {
 	return nil
 }
 
+func (f *addIgnoreFilter) beginDirectoryRules(localDir string) (absDir, baseRel string, alreadyLoaded bool, err error) {
+	absDir, err = filepath.Abs(localDir)
+	if err != nil {
+		return "", "", false, fmt.Errorf("resolve ignore directory %q: %w", localDir, err)
+	}
+	absDir = filepath.Clean(absDir)
+	if _, ok := f.loadedByDir[absDir]; ok {
+		return absDir, "", true, nil
+	}
+	baseRel, err = f.relativePath(absDir)
+	if err != nil {
+		return "", "", false, err
+	}
+	f.loadedByDir[absDir] = struct{}{}
+	return absDir, baseRel, false, nil
+}
+
+func (f *addIgnoreFilter) loadRootedRuleFile(baseRel, displayName, name string, readFile func(string) ([]byte, error)) error {
+	data, err := readFile(name)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read ignore file %q: %w", displayName, err)
+	}
+	return f.loadRuleData(baseRel, displayName, data)
+}
+
 func (f *addIgnoreFilter) loadRuleFile(baseRel, name string, optional bool) error {
 	data, err := os.ReadFile(name)
 	if err != nil {
@@ -100,6 +139,10 @@ func (f *addIgnoreFilter) loadRuleFile(baseRel, name string, optional bool) erro
 		}
 		return fmt.Errorf("read ignore file %q: %w", name, err)
 	}
+	return f.loadRuleData(baseRel, name, data)
+}
+
+func (f *addIgnoreFilter) loadRuleData(baseRel, name string, data []byte) error {
 	for _, line := range strings.Split(string(data), "\n") {
 		negated := strings.HasPrefix(line, "!") && !strings.HasPrefix(line, `\!`)
 		compileLine := line

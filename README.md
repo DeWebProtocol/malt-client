@@ -6,6 +6,7 @@ that must not be part of the application-neutral authentication core:
 
 - accepted and candidate root policy;
 - application-path parsing and UnixFS materialization;
+- optional IPFS-compatible Merkle DAG UnixFS import;
 - calls to a remote MALT gateway;
 - local verification of resolve/read proofs and returned payload bytes;
 - a user-owned daemon control plane over a Unix socket.
@@ -51,6 +52,24 @@ tree:
 ./bin/malt root accept my-data <candidate-root-cid>
 ```
 
+The native MALT target currently exposes one UnixFS materialization strategy:
+`hybrid` (the default). Each directory is an authenticated map root, while
+ancestor maps retain descendant root-relative path bindings. Pure `flat` and
+pure `hierarchical` strategies remain design and evaluation counterfactuals;
+they are not accepted CLI values.
+
+The same client can materialize one local file or directory as an
+IPFS-compatible Merkle DAG while reusing the gateway CAS:
+
+```bash
+./bin/malt add --target merkle-dag \
+  --file-layout balanced --dir-layout adaptive ./my-data
+```
+
+This returns a Merkle DAG root CID. It does not create a MALT root, ProofList,
+or trusted-root candidate, so `--root` and `--alias` are intentionally rejected
+for this target.
+
 Run `malt <command> --help` for the exact flags and output contract.
 
 Default state lives under `~/.malt-client/`. The generated configuration points
@@ -69,6 +88,8 @@ to `http://127.0.0.1:8080`; edit `gateway.base_url` to select another gateway.
    or an independent publication mechanism establishes trust.
 
 See [ARCHITECTURE.md](./ARCHITECTURE.md) for repository boundaries.
+The [v0.0.5 migration matrix](./docs/v0.0.5-parity.md) records which former
+core application capabilities moved here and which were deliberately re-homed.
 
 ## License
 

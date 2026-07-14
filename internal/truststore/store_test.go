@@ -2,7 +2,9 @@ package truststore
 
 import (
 	"errors"
+	"fmt"
 	"path/filepath"
+	"sync"
 	"testing"
 )
 
@@ -44,5 +46,67 @@ func TestCandidateRequiresExplicitAcceptance(t *testing.T) {
 	}
 	if _, err := reopened.AcceptCandidate("docs", testRoot, "rollback"); !errors.Is(err, ErrCandidateNotFound) {
 		t.Fatalf("unexpected rollback acceptance error: %v", err)
+	}
+}
+
+func TestIndependentStoresReloadBeforeMutating(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "roots.json")
+	first, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := first.Trust("first", testRoot, "unixfs", "", "first-process"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := second.Trust("second", candidateRoot, "unixfs", "", "second-process"); err != nil {
+		t.Fatal(err)
+	}
+	roots, err := first.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(roots) != 2 || roots[0].Alias != "first" || roots[1].Alias != "second" {
+		t.Fatalf("roots after interleaved writers = %#v", roots)
+	}
+}
+
+func TestIndependentStoresSerializeConcurrentMutations(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "roots.json")
+	stores := make([]*Store, 2)
+	for i := range stores {
+		store, err := Open(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		stores[i] = store
+	}
+
+	var wg sync.WaitGroup
+	errs := make(chan error, 20)
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			_, err := stores[i%len(stores)].Trust(fmt.Sprintf("root-%02d", i), testRoot, "unixfs", "", "concurrent-test")
+			errs <- err
+		}(i)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	roots, err := stores[0].List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(roots) != 20 {
+		t.Fatalf("roots after concurrent writers = %d, want 20", len(roots))
 	}
 }

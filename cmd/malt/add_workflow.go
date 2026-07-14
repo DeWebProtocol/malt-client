@@ -34,24 +34,16 @@ func addInputsWithUnixFS(ctx context.Context, daemon *daemonclient.Client, casCl
 	if err != nil {
 		return nil, err
 	}
-	switch normalized.Layout {
-	case addLayoutFlat:
-		return addInputsWithMALTFlatUnixFS(ctx, daemon, casClient, rawInputs, root, normalized)
-	case addLayoutHierarchical:
-		return addInputsWithMALTHierarchicalUnixFS(ctx, daemon, casClient, rawInputs, root, normalized)
+	switch normalized.Target {
+	case addTargetMALT:
+		return addInputsWithMALTHybridUnixFS(ctx, daemon, casClient, rawInputs, root, normalized)
+	case addTargetMerkleDAG:
+		return addInputsWithMerkleDAGUnixFS(ctx, casClient, rawInputs, normalized)
 	}
-	return nil, fmt.Errorf("unsupported add model/layout %q/%q", normalized.Model, normalized.Layout)
+	return nil, fmt.Errorf("unsupported add target/model/layout %q/%q/%q", normalized.Target, normalized.Model, normalized.Layout)
 }
 
-func addInputsWithMALTFlatUnixFS(ctx context.Context, daemon *daemonclient.Client, casClient addCASClient, rawInputs []string, root string, opts addBuildOptions) (*addUnixFSResult, error) {
-	return addInputsWithMALTStagedUnixFS(ctx, daemon, casClient, rawInputs, root, opts)
-}
-
-func addInputsWithMALTHierarchicalUnixFS(ctx context.Context, daemon *daemonclient.Client, casClient addCASClient, rawInputs []string, root string, opts addBuildOptions) (*addUnixFSResult, error) {
-	return addInputsWithMALTStagedUnixFS(ctx, daemon, casClient, rawInputs, root, opts)
-}
-
-func addInputsWithMALTStagedUnixFS(ctx context.Context, daemon *daemonclient.Client, casClient addCASClient, rawInputs []string, root string, opts addBuildOptions) (*addUnixFSResult, error) {
+func addInputsWithMALTHybridUnixFS(ctx context.Context, daemon *daemonclient.Client, casClient addCASClient, rawInputs []string, root string, opts addBuildOptions) (*addUnixFSResult, error) {
 	if daemon == nil {
 		return nil, fmt.Errorf("gateway client is required")
 	}
