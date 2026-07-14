@@ -9,6 +9,7 @@ require (
 	github.com/ipfs/go-block-format v0.2.4
 	github.com/ipfs/go-cid v0.6.2
 	github.com/ipfs/go-ipld-format v0.6.4
+	github.com/ipld/go-ipld-prime v0.24.0
 	github.com/multiformats/go-multihash v0.2.3
 	github.com/spf13/cobra v1.10.2
 	golang.org/x/sys v0.46.0
@@ -37,7 +38,6 @@ require (
 	github.com/ipfs/go-log/v2 v2.9.2 // indirect
 	github.com/ipfs/go-metrics-interface v0.3.0 // indirect
 	github.com/ipld/go-codec-dagpb v1.7.0 // indirect
-	github.com/ipld/go-ipld-prime v0.24.0 // indirect
 	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
 	github.com/libp2p/go-buffer-pool v0.1.0 // indirect
 	github.com/mattn/go-isatty v0.0.22 // indirect

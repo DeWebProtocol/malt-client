@@ -182,6 +182,8 @@ func writeStoreError(w http.ResponseWriter, err error) {
 	status := http.StatusBadRequest
 	if errors.Is(err, truststore.ErrNotFound) || errors.Is(err, truststore.ErrCandidateNotFound) {
 		status = http.StatusNotFound
+	} else if errors.Is(err, truststore.ErrStaleCandidate) {
+		status = http.StatusConflict
 	}
 	writeJSON(w, status, map[string]string{"error": err.Error()})
 }

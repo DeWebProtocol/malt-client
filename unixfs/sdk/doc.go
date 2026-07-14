@@ -1,4 +1,5 @@
-// Package unixfs provides client-side UnixFS planning and verification helpers.
-// It translates filesystem operations into the UnixFS model and portable MALT
-// mutations without owning ArcTable or gateway execution state.
+// Package unixfs provides the transport-neutral, locally verified native
+// UnixFS reader/writer facade plus staging and materialization helpers. It
+// translates application paths into portable MALT operations without owning
+// ArcTable, trust-store, or gateway execution state.
 package unixfs

@@ -7,7 +7,6 @@ import (
 	unixfsmodel "github.com/dewebprotocol/malt-client/unixfs/model"
 	"github.com/dewebprotocol/malt/protocol"
 	clientverifier "github.com/dewebprotocol/malt/sdk/verifier"
-	cid "github.com/ipfs/go-cid"
 	"github.com/spf13/cobra"
 )
 
@@ -32,20 +31,9 @@ func runResolve(cmd *cobra.Command, args []string) error {
 	if len(args) > 1 {
 		rawPath = args[1]
 	}
-	root, err := cid.Parse(args[0])
+	root, _, err := resolveTrustedRoot(args[0])
 	if err != nil {
-		store, _, storeErr := openTrustStore()
-		if storeErr != nil {
-			return storeErr
-		}
-		record, storeErr := store.Get(args[0])
-		if storeErr != nil {
-			return fmt.Errorf("%q is neither a CID nor a trusted-root alias: %w", args[0], storeErr)
-		}
-		root, err = cid.Parse(record.AcceptedRoot)
-		if err != nil {
-			return fmt.Errorf("trusted alias %q contains an invalid root: %w", args[0], err)
-		}
+		return err
 	}
 	segments, err := unixfsmodel.ParsePath(rawPath)
 	if err != nil {

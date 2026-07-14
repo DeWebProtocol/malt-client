@@ -1,7 +1,7 @@
 package main
 
-import daemonclient "github.com/dewebprotocol/malt-client/internal/gateway"
+import gatewayclient "github.com/dewebprotocol/malt-client/client"
 
 // makeCASClient uses the gateway-owned CAS adapter. The client never imports a
 // MALT-core storage implementation and verifies the returned CID locally.
-func makeCASClient() (*daemonclient.Client, error) { return gatewayClient() }
+func makeCASClient() (*gatewayclient.Client, error) { return gatewayClient() }

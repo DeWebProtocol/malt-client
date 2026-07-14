@@ -52,6 +52,21 @@ tree:
 ./bin/malt root accept my-data <candidate-root-cid>
 ```
 
+Read verified native UnixFS content and materialize a removal candidate:
+
+```bash
+./bin/malt stat my-data docs/readme.txt
+./bin/malt cat my-data docs/readme.txt
+./bin/malt cat my-data media/video.bin --offset 1048576 --length 262144 > part.bin
+./bin/malt rm my-data docs/obsolete.txt
+./bin/malt root accept my-data <candidate-root-from-rm>
+```
+
+`stat` emits JSON including locally verified resolve/read evidence. `cat`
+writes only verified file bytes to stdout. `rm` never changes the accepted root:
+it emits `accepted: false` and, when given an alias, records the result as a
+candidate for a later explicit `root accept` command.
+
 The native MALT target currently exposes one UnixFS materialization strategy:
 `hybrid` (the default). Each directory is an authenticated map root, while
 ancestor maps retain descendant root-relative path bindings. Pure `flat` and
@@ -69,6 +84,34 @@ IPFS-compatible Merkle DAG while reusing the gateway CAS:
 This returns a Merkle DAG root CID. It does not create a MALT root, ProofList,
 or trusted-root candidate, so `--root` and `--alias` are intentionally rejected
 for this target.
+
+The public Go API is importable as:
+
+```go
+import (
+    client "github.com/dewebprotocol/malt-client/client"
+    unixfs "github.com/dewebprotocol/malt-client/unixfs/sdk"
+)
+```
+
+Package `client` is an untrusted gateway transport. Package `unixfs/sdk`
+composes it into verified `Resolve`, `Stat`, `ReadFile`, `ReadFileRange`,
+`ReadListPayloadRange`, and `RemovePath` operations. The UnixFS facade requires
+a caller-selected root, verifies ProofLists locally, enforces resolve-to-read
+continuity, and verifies raw, manifest, and measured-list payload bytes.
+
+The same transport exposes the gateway's distinct Merkle DAG compatibility
+profiles. `ResolveMerkleDAGVerified` and `ReadMerkleDAGVerified` recompute every
+evidence block CID and replay the UnixFS link traversal locally. These results
+are never represented as MALT ProofLists.
+
+The CLI exposes the same fail-closed read path without consulting the MALT root
+store:
+
+```bash
+./bin/malt merkledag resolve <merkle-dag-root-cid> docs/readme.txt
+./bin/malt merkledag cat <merkle-dag-root-cid> docs/readme.txt
+```
 
 Run `malt <command> --help` for the exact flags and output contract.
 
@@ -88,6 +131,7 @@ to `http://127.0.0.1:8080`; edit `gateway.base_url` to select another gateway.
    or an independent publication mechanism establishes trust.
 
 See [ARCHITECTURE.md](./ARCHITECTURE.md) for repository boundaries.
+See [docs/go-api.md](./docs/go-api.md) for the public API and CLI contracts.
 The [v0.0.5 migration matrix](./docs/v0.0.5-parity.md) records which former
 core application capabilities moved here and which were deliberately re-homed.
 

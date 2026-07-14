@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	daemonclient "github.com/dewebprotocol/malt-client/internal/gateway"
+	gatewayclient "github.com/dewebprotocol/malt-client/client"
 	"github.com/dewebprotocol/malt-client/unixfs/sdk"
 	cid "github.com/ipfs/go-cid"
 )
@@ -29,38 +29,38 @@ type addCASClient interface {
 	Get(ctx context.Context, c cid.Cid) ([]byte, error)
 }
 
-func addInputsWithUnixFS(ctx context.Context, daemon *daemonclient.Client, casClient addCASClient, rawInputs []string, root string, opts addBuildOptions) (*addUnixFSResult, error) {
+func addInputsWithUnixFS(ctx context.Context, remote *gatewayclient.Client, casClient addCASClient, rawInputs []string, root string, opts addBuildOptions) (*addUnixFSResult, error) {
 	normalized, err := normalizeAddBuildOptions(opts)
 	if err != nil {
 		return nil, err
 	}
 	switch normalized.Target {
 	case addTargetMALT:
-		return addInputsWithMALTHybridUnixFS(ctx, daemon, casClient, rawInputs, root, normalized)
+		return addInputsWithMALTHybridUnixFS(ctx, remote, casClient, rawInputs, root, normalized)
 	case addTargetMerkleDAG:
 		return addInputsWithMerkleDAGUnixFS(ctx, casClient, rawInputs, normalized)
 	}
 	return nil, fmt.Errorf("unsupported add target/model/layout %q/%q/%q", normalized.Target, normalized.Model, normalized.Layout)
 }
 
-func addInputsWithMALTHybridUnixFS(ctx context.Context, daemon *daemonclient.Client, casClient addCASClient, rawInputs []string, root string, opts addBuildOptions) (*addUnixFSResult, error) {
-	if daemon == nil {
+func addInputsWithMALTHybridUnixFS(ctx context.Context, remote *gatewayclient.Client, casClient addCASClient, rawInputs []string, root string, opts addBuildOptions) (*addUnixFSResult, error) {
+	if remote == nil {
 		return nil, fmt.Errorf("gateway client is required")
 	}
-	staged, err := buildAddStagingTree(ctx, casClient, daemon, rawInputs, opts)
+	staged, err := buildAddStagingTree(ctx, casClient, remote, rawInputs, opts)
 	if err != nil {
 		return nil, err
 	}
 
 	rootNode := staged.Root
 	if strings.TrimSpace(root) != "" {
-		existing, err := loadExistingCurrentTree(ctx, daemon, casClient, root)
+		existing, err := loadExistingCurrentTree(ctx, remote, casClient, root)
 		if err != nil {
 			return nil, err
 		}
 		rootNode = unixfs.MergeStagedNodes(existing, staged.Root)
 	}
-	mat, err := materializeDirectory(ctx, daemon, casClient, rootNode)
+	mat, err := materializeDirectory(ctx, remote, casClient, rootNode)
 	if err != nil {
 		return nil, err
 	}

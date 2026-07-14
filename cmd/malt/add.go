@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	daemonclient "github.com/dewebprotocol/malt-client/internal/gateway"
+	gatewayclient "github.com/dewebprotocol/malt-client/client"
 	"github.com/spf13/cobra"
 )
 
@@ -93,7 +93,7 @@ func runAdd(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	var daemon *daemonclient.Client
+	var remote *gatewayclient.Client
 	workingRoot := strings.TrimSpace(addRootFlag)
 	var candidateStoreAlias string
 	if opts.Target == addTargetMerkleDAG && (workingRoot != "" || strings.TrimSpace(addAliasFlag) != "") {
@@ -115,15 +115,15 @@ func runAdd(cmd *cobra.Command, args []string) error {
 		candidateStoreAlias = record.Alias
 	}
 	if opts.Target == addTargetMALT {
-		daemon, err = gatewayClient()
+		remote, err = gatewayClient()
 		if err != nil {
 			return err
 		}
 	}
 
-	result, err := addInputsWithUnixFS(ctx, daemon, casClient, args, workingRoot, opts)
+	result, err := addInputsWithUnixFS(ctx, remote, casClient, args, workingRoot, opts)
 	if err != nil {
-		var apiErr *daemonclient.Error
+		var apiErr *gatewayclient.Error
 		if errors.As(err, &apiErr) {
 			return daemonCommandError(err)
 		}

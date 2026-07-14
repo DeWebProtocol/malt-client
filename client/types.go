@@ -1,21 +1,6 @@
-// Package api defines gateway wire DTOs used by the client transport.
-package api
+package client
 
-// ErrorResponse represents a structured API error.
-type ErrorResponse struct {
-	Error   string `json:"error,omitempty"`
-	Message string `json:"message,omitempty"`
-}
-
-// MessageText accepts the gateway's supported error shapes.
-func (e ErrorResponse) MessageText() string {
-	if e.Message != "" {
-		return e.Message
-	}
-	return e.Error
-}
-
-// HealthResponse is returned by the gateway health endpoint.
+// HealthResponse is returned by the managed gateway health endpoint.
 type HealthResponse struct {
 	Status string `json:"status"`
 }
@@ -59,7 +44,9 @@ type SemanticFixedListCommit struct {
 	ChunkSize uint64 `json:"chunk_size"`
 }
 
-// SemanticMutationResponse returns a writer mutation receipt.
+// SemanticMutationResponse is an untrusted writer mutation receipt. NewRoot
+// and ResultRoot are candidates; receiving this value never accepts either
+// root into the caller's trust policy.
 type SemanticMutationResponse struct {
 	BaseRoot        string `json:"base_root"`
 	NewRoot         string `json:"new_root"`
@@ -71,12 +58,24 @@ type SemanticMutationResponse struct {
 	ListCount       int    `json:"list_count,omitempty"`
 }
 
-// CreateStructureRequest creates a new structure from an arc set.
+// CreateStructureRequest creates a new structure from canonical bindings.
 type CreateStructureRequest struct {
 	Arcs map[string]string `json:"arcs"`
 }
 
-// CreateStructureResponse returns the created root.
+// CreateStructureResponse returns an untrusted candidate root.
 type CreateStructureResponse struct {
 	Root string `json:"root"`
+}
+
+type errorResponse struct {
+	Error   string `json:"error,omitempty"`
+	Message string `json:"message,omitempty"`
+}
+
+func (e errorResponse) messageText() string {
+	if e.Message != "" {
+		return e.Message
+	}
+	return e.Error
 }
