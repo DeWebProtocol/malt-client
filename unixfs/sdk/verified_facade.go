@@ -1,10 +1,13 @@
 package unixfs
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"math"
+	"os"
 	"path"
 	"slices"
 
@@ -91,6 +94,21 @@ type RemoveResult struct {
 	ArcCount         int     `json:"arc_count"`
 }
 
+// WriteResult identifies an independently checked UnixFS candidate root.
+// Receiving this value never promotes CandidateRoot into local trusted-root
+// policy; callers must explicitly publish or accept it.
+type WriteResult struct {
+	BaseRoot         cid.Cid `json:"base_root"`
+	CandidateRoot    cid.Cid `json:"candidate_root"`
+	Path             string  `json:"path,omitempty"`
+	Kind             string  `json:"kind"`
+	Size             uint64  `json:"size,omitempty"`
+	Accepted         bool    `json:"accepted"`
+	ImmutableObjects int     `json:"immutable_objects"`
+	MALTObjects      int     `json:"malt_objects"`
+	ArcCount         int     `json:"arc_count"`
+}
+
 // Reader is the transport-neutral, locally verified UnixFS read facade.
 type Reader interface {
 	Resolve(context.Context, cid.Cid, string) (*Resolution, error)
@@ -103,6 +121,11 @@ type Reader interface {
 // Writer extends Reader with immutable candidate-root materialization.
 type Writer interface {
 	Reader
+	EmptyDirectory(context.Context) (*WriteResult, error)
+	AddDirectory(context.Context, cid.Cid, string) (*WriteResult, error)
+	AddFile(context.Context, cid.Cid, string, []byte) (*WriteResult, error)
+	AddFileStream(context.Context, cid.Cid, string, io.Reader) (*WriteResult, error)
+	AddFileSized(context.Context, cid.Cid, string, io.Reader, int64) (*WriteResult, error)
 	RemovePath(context.Context, cid.Cid, string) (*RemoveResult, error)
 }
 
@@ -113,10 +136,13 @@ type ReaderOptions struct {
 }
 
 type WriterOptions struct {
-	Remote   Remote
-	Blocks   BlockStore
-	Verifier LocalVerifier
-	Roots    StagedRootCreator
+	Remote    Remote
+	Blocks    BlockStore
+	Verifier  LocalVerifier
+	Roots     StagedRootCreator
+	Lists     FixedListPayloadWriter
+	ChunkSize int
+	TempDir   string
 }
 
 type verifiedReader struct {
@@ -127,8 +153,11 @@ type verifiedReader struct {
 
 type verifiedWriter struct {
 	*verifiedReader
-	store BlockStore
-	roots StagedRootCreator
+	store     BlockStore
+	roots     StagedRootCreator
+	lists     FixedListPayloadWriter
+	chunkSize int
+	tempDir   string
 }
 
 // NewReader constructs a facade that verifies every resolve/read result
@@ -152,7 +181,7 @@ func NewReader(opts ReaderOptions) (Reader, error) {
 }
 
 // NewWriter constructs a verified reader plus the narrowly scoped immutable
-// block/root capabilities required to materialize a removal candidate.
+// block/root capabilities required to materialize write candidates.
 func NewWriter(opts WriterOptions) (Writer, error) {
 	reader, err := NewReader(ReaderOptions{Remote: opts.Remote, Blocks: opts.Blocks, Verifier: opts.Verifier})
 	if err != nil {
@@ -164,7 +193,24 @@ func NewWriter(opts WriterOptions) (Writer, error) {
 	if opts.Roots == nil {
 		return nil, fmt.Errorf("unixfs root creator is nil")
 	}
-	return &verifiedWriter{verifiedReader: reader.(*verifiedReader), store: opts.Blocks, roots: opts.Roots}, nil
+	lists := opts.Lists
+	if lists == nil {
+		lists, _ = opts.Roots.(FixedListPayloadWriter)
+	}
+	if lists == nil {
+		return nil, fmt.Errorf("unixfs fixed-list payload writer is nil")
+	}
+	chunkSize := opts.ChunkSize
+	if chunkSize == 0 {
+		chunkSize = unixfsmodel.DefaultChunkSize
+	}
+	if chunkSize < 0 {
+		return nil, fmt.Errorf("unixfs chunk size must be positive")
+	}
+	return &verifiedWriter{
+		verifiedReader: reader.(*verifiedReader), store: opts.Blocks,
+		roots: opts.Roots, lists: lists, chunkSize: chunkSize, tempDir: opts.TempDir,
+	}, nil
 }
 
 func (r *verifiedReader) Resolve(ctx context.Context, trustedRoot cid.Cid, rawPath string) (*Resolution, error) {
@@ -441,6 +487,168 @@ func (r *verifiedReader) getBoundBlock(ctx context.Context, key cid.Cid) ([]byte
 		return nil, fmt.Errorf("payload bytes do not match authenticated CID %s", key)
 	}
 	return data, nil
+}
+
+// EmptyDirectory materializes and verifies a new empty UnixFS directory. The
+// returned root is a candidate until the caller explicitly accepts it.
+func (w *verifiedWriter) EmptyDirectory(ctx context.Context) (*WriteResult, error) {
+	current := NewStagedDirectory()
+	current.Changed = true
+	return w.materializeWrite(ctx, cid.Undef, "", StagedKindDirectory, 0, current)
+}
+
+// AddDirectory ensures that rawPath is a directory below trustedRoot. Existing
+// files on the path are rejected instead of silently replaced.
+func (w *verifiedWriter) AddDirectory(ctx context.Context, trustedRoot cid.Cid, rawPath string) (*WriteResult, error) {
+	segments, err := unixfsmodel.ParsePath(rawPath)
+	if err != nil {
+		return nil, err
+	}
+	current, err := w.loadWritableTree(ctx, trustedRoot)
+	if err != nil {
+		return nil, err
+	}
+	if err := requireDirectoryPath(current, segments); err != nil {
+		return nil, err
+	}
+	canonical := path.Join(segments...)
+	EnsureStagedDirectory(current, canonical)
+	return w.materializeWrite(ctx, trustedRoot, canonical, StagedKindDirectory, 0, current)
+}
+
+// AddFile writes a byte slice using the same bounded-memory materializer as
+// AddFileSized.
+func (w *verifiedWriter) AddFile(ctx context.Context, trustedRoot cid.Cid, rawPath string, data []byte) (*WriteResult, error) {
+	return w.AddFileSized(ctx, trustedRoot, rawPath, bytes.NewReader(data), int64(len(data)))
+}
+
+// AddFileStream accepts a stream whose size is not known in advance. It spools
+// to a private temporary file, so memory use stays bounded before the normal
+// fixed-list streaming path applies backpressure through BlockStore.Put.
+func (w *verifiedWriter) AddFileStream(ctx context.Context, trustedRoot cid.Cid, rawPath string, src io.Reader) (*WriteResult, error) {
+	if src == nil {
+		return nil, fmt.Errorf("unixfs file stream is nil")
+	}
+	staged, err := os.CreateTemp(w.tempDir, "malt-client-unixfs-*")
+	if err != nil {
+		return nil, fmt.Errorf("create UnixFS stream spool: %w", err)
+	}
+	name := staged.Name()
+	defer os.Remove(name)
+	defer staged.Close()
+	size, err := io.Copy(staged, src)
+	if err != nil {
+		return nil, fmt.Errorf("spool UnixFS file stream: %w", err)
+	}
+	if _, err := staged.Seek(0, io.SeekStart); err != nil {
+		return nil, fmt.Errorf("rewind UnixFS file stream: %w", err)
+	}
+	return w.AddFileSized(ctx, trustedRoot, rawPath, staged, size)
+}
+
+// AddFileSized streams exactly size bytes into immutable CAS blocks and then
+// materializes the changed directory ancestry. A short or overlong stream is
+// rejected before a candidate root is returned.
+func (w *verifiedWriter) AddFileSized(ctx context.Context, trustedRoot cid.Cid, rawPath string, src io.Reader, size int64) (*WriteResult, error) {
+	if src == nil {
+		return nil, fmt.Errorf("unixfs file stream is nil")
+	}
+	if size < 0 {
+		return nil, fmt.Errorf("unixfs file size must not be negative")
+	}
+	if size == math.MaxInt64 {
+		return nil, fmt.Errorf("unixfs file size exceeds supported stream limit")
+	}
+	segments, err := unixfsmodel.ParsePath(rawPath)
+	if err != nil {
+		return nil, err
+	}
+	if len(segments) == 0 {
+		return nil, fmt.Errorf("unixfs file path is empty")
+	}
+	current, err := w.loadWritableTree(ctx, trustedRoot)
+	if err != nil {
+		return nil, err
+	}
+	if err := requireFilePath(current, segments); err != nil {
+		return nil, err
+	}
+	limited := &io.LimitedReader{R: src, N: size + 1}
+	payload, _, err := MaterializeStagedFilePayload(ctx, w.store, w.lists, limited, size, w.chunkSize)
+	if err != nil {
+		return nil, fmt.Errorf("materialize UnixFS file payload: %w", err)
+	}
+	consumed := size + 1 - limited.N
+	if consumed != size {
+		return nil, fmt.Errorf("unixfs file stream contained %d bytes, expected %d", consumed, size)
+	}
+	canonical := path.Join(segments...)
+	if err := SetStagedFile(current, canonical, payload); err != nil {
+		return nil, err
+	}
+	return w.materializeWrite(ctx, trustedRoot, canonical, StagedKindFile, uint64(size), current)
+}
+
+func (w *verifiedWriter) loadWritableTree(ctx context.Context, trustedRoot cid.Cid) (*StagedNode, error) {
+	if !trustedRoot.Defined() {
+		return NewStagedDirectory(), nil
+	}
+	current, err := LoadStagedCurrentTree(ctx, w, w.store, trustedRoot.String())
+	if err != nil {
+		return nil, fmt.Errorf("load verified UnixFS tree: %w", err)
+	}
+	return current, nil
+}
+
+func (w *verifiedWriter) materializeWrite(ctx context.Context, base cid.Cid, rawPath, kind string, size uint64, current *StagedNode) (*WriteResult, error) {
+	materialized, err := MaterializeStagedDirectory(ctx, w.roots, w.store, current)
+	if err != nil {
+		return nil, fmt.Errorf("materialize UnixFS candidate: %w", err)
+	}
+	if err := w.verifyStagedCandidate(ctx, materialized.Key, "", current); err != nil {
+		return nil, fmt.Errorf("verify UnixFS candidate root: %w", err)
+	}
+	return &WriteResult{
+		BaseRoot: base, CandidateRoot: materialized.Key, Path: rawPath, Kind: kind,
+		Size: size, Accepted: false, ImmutableObjects: materialized.ImmutableObjects,
+		MALTObjects: materialized.MALTObjects, ArcCount: materialized.ArcCount,
+	}, nil
+}
+
+func requireDirectoryPath(root *StagedNode, segments []string) error {
+	current := root
+	for _, segment := range segments {
+		child := current.Children[segment]
+		if child == nil {
+			return nil
+		}
+		if child.Kind != StagedKindDirectory {
+			return fmt.Errorf("%w: %s", ErrNotDirectory, segment)
+		}
+		current = child
+	}
+	return nil
+}
+
+func requireFilePath(root *StagedNode, segments []string) error {
+	current := root
+	for index, segment := range segments {
+		child := current.Children[segment]
+		if child == nil {
+			return nil
+		}
+		if index == len(segments)-1 {
+			if child.Kind == StagedKindDirectory {
+				return fmt.Errorf("%w: %s", ErrNotFile, segment)
+			}
+			return nil
+		}
+		if child.Kind != StagedKindDirectory {
+			return fmt.Errorf("%w: %s", ErrNotDirectory, segment)
+		}
+		current = child
+	}
+	return nil
 }
 
 func (w *verifiedWriter) RemovePath(ctx context.Context, trustedRoot cid.Cid, rawPath string) (*RemoveResult, error) {

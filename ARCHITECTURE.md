@@ -62,7 +62,7 @@ that flow it returns every touched CID-bound block. The public client hashes
 each block and independently replays UnixFS traversal from the caller-selected
 Merkle DAG root. This is Merkle DAG authentication, not MALT authentication,
 and uses `merkledag.resolve/v0alpha1` and `merkledag.read/v0alpha1`, never a
-ProofList. Resolve replay also follows DAG-CBOR map/list coordinates that
+ProofList. Resolve replay also follows DAG-CBOR/DAG-JSON map/list coordinates that
 terminate at CID links; successful read replay still requires a UnixFS file.
 The compatibility wire contract carries coordinates as a typed `segments`
 array. Each segment is opaque UTF-8 data rather than a URL or filesystem path
@@ -91,7 +91,8 @@ reads carry their own exact range proof.
 ## Daemon
 
 The daemon is a local control plane for trusted-root state. It listens only on
-a user-owned Unix socket with mode `0600`. It does not expose a public proof
+a user-owned Unix socket with mode `0600`, or an owner/system-only Windows
+named pipe derived from the state path. It does not expose a public proof
 verification endpoint and does not make a gateway-generated root trusted. A
 managed background daemon is bound to its state file by a random lifecycle
 instance token; `stop` and `restart` signal a PID only after the private
@@ -107,8 +108,10 @@ the operation fails as stale instead of applying a sibling transition.
 - `cmd/malt`: CLI and daemon process lifecycle.
 - `client`: stable public gateway transport, wire DTOs, and local Merkle DAG
   replay helpers.
+- `merkledag/ipld`: generic CID-validating IPLD parsing and link traversal for
+  Merkle-DAG compatibility applications.
 - `internal/truststore`: accepted and candidate root persistence.
-- `internal/daemon`: local Unix-socket root-control API.
+- `internal/daemon`: local Unix-socket/Windows-pipe root-control API.
 - `internal/cas`: client-side CAS helpers and byte verification.
 - `internal/merkledagimport`: IPFS-compatible UnixFS DAG construction.
 - `unixfs/model`: UnixFS application values and path rules.

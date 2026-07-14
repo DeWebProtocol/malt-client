@@ -18,6 +18,7 @@ import (
 	cid "github.com/ipfs/go-cid"
 	ipld "github.com/ipfs/go-ipld-format"
 	"github.com/ipld/go-ipld-prime/codec/dagcbor"
+	"github.com/ipld/go-ipld-prime/codec/dagjson"
 	cidlink "github.com/ipld/go-ipld-prime/linking/cid"
 	"github.com/ipld/go-ipld-prime/node/basicnode"
 	mh "github.com/multiformats/go-multihash"
@@ -234,6 +235,47 @@ func TestMerkleDAGResolveVerifierReplaysDAGCBORLinksAndRejectsUnusedEvidence(t *
 	response.Blocks = append(response.Blocks, client.MerkleDAGBlock{CID: unused.String(), Codec: cid.Raw, Data: []byte("unused")})
 	if err := client.VerifyMerkleDAGResolve(t.Context(), request, response); err == nil {
 		t.Fatal("resolve verifier accepted unused evidence")
+	}
+}
+
+func TestMerkleDAGResolveVerifierReplaysDAGJSONLinks(t *testing.T) {
+	payload := []byte("linked raw payload")
+	target := mustBlockCID(t, payload)
+	builder := basicnode.Prototype.Map.NewBuilder()
+	assembler, err := builder.BeginMap(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := assembler.AssembleKey().AssignString("file"); err != nil {
+		t.Fatal(err)
+	}
+	if err := assembler.AssembleValue().AssignLink(cidlink.Link{Cid: target}); err != nil {
+		t.Fatal(err)
+	}
+	if err := assembler.Finish(); err != nil {
+		t.Fatal(err)
+	}
+	var encoded bytes.Buffer
+	if err := dagjson.Encode(builder.Build(), &encoded); err != nil {
+		t.Fatal(err)
+	}
+	hash, err := mh.Sum(encoded.Bytes(), mh.SHA2_256, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := cid.NewCidV1(cid.DagJSON, hash)
+	request := client.MerkleDAGResolveRequest{Profile: client.MerkleDAGResolveProfile, Root: root.String(), Segments: []string{"file"}}
+	response := client.MerkleDAGResolveResponse{
+		Profile: client.MerkleDAGResolveProfile,
+		Target:  target.String(),
+		Kind:    "file",
+		Blocks: []client.MerkleDAGBlock{
+			{CID: root.String(), Codec: cid.DagJSON, Data: encoded.Bytes()},
+			{CID: target.String(), Codec: cid.Raw, Data: payload},
+		},
+	}
+	if err := client.VerifyMerkleDAGResolve(t.Context(), request, response); err != nil {
+		t.Fatalf("verify DAG-JSON resolve: %v", err)
 	}
 }
 

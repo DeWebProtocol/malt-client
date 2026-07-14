@@ -9,7 +9,8 @@ that must not be part of the application-neutral authentication core:
 - optional IPFS-compatible Merkle DAG UnixFS import;
 - calls to a remote MALT gateway;
 - local verification of resolve/read proofs and returned payload bytes;
-- a user-owned daemon control plane over a Unix socket.
+- a user-owned daemon control plane over a private Unix socket or Windows
+  named pipe.
 
 The gateway is an untrusted proof producer. A successful gateway response does
 not update an accepted root automatically: mutation results are recorded as
@@ -96,7 +97,8 @@ import (
 
 Package `client` is an untrusted gateway transport. Package `unixfs/sdk`
 composes it into verified `Resolve`, `Stat`, `ReadFile`, `ReadFileRange`,
-`ReadListPayloadRange`, and `RemovePath` operations. The UnixFS facade requires
+`ReadListPayloadRange`, `EmptyDirectory`, `AddDirectory`, `AddFile`, streaming
+file writes, and `RemovePath` operations. The UnixFS facade requires
 a caller-selected root, verifies ProofLists locally, enforces resolve-to-read
 continuity, and verifies raw, manifest, and measured-list payload bytes.
 
@@ -104,6 +106,11 @@ The same transport exposes the gateway's distinct Merkle DAG compatibility
 profiles. `ResolveMerkleDAGVerified` and `ReadMerkleDAGVerified` recompute every
 evidence block CID and replay the UnixFS link traversal locally. These results
 are never represented as MALT ProofLists.
+
+The transport also exposes bounded ordered CAS `PutBatch`/`HasBatch` and a
+typed diagnostic metrics snapshot. Package `merkledag/ipld` restores the
+generic CID-bound raw, DAG-PB, DAG-CBOR, DAG-JSON, and legacy JSON parser/link
+toolkit for client-side compatibility code.
 
 The CLI exposes the same fail-closed read path without consulting the MALT root
 store:

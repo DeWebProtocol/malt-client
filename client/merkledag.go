@@ -20,6 +20,7 @@ import (
 	cid "github.com/ipfs/go-cid"
 	ipld "github.com/ipfs/go-ipld-format"
 	"github.com/ipld/go-ipld-prime/codec/dagcbor"
+	"github.com/ipld/go-ipld-prime/codec/dagjson"
 	"github.com/ipld/go-ipld-prime/datamodel"
 	cidlink "github.com/ipld/go-ipld-prime/linking/cid"
 	"github.com/ipld/go-ipld-prime/node/basicnode"
@@ -446,7 +447,7 @@ func replayMerkleDAGResolve(ctx context.Context, dag *evidenceDAG, rawRoot strin
 	current := root
 	remaining := append([]string(nil), segments...)
 	for {
-		if current.Type() == cid.DagCBOR {
+		if isLinkIPLDCodec(current.Type()) {
 			raw, err := dag.load(ctx, current)
 			if err != nil {
 				return replayedMerkleDAGNode{}, err
@@ -454,7 +455,7 @@ func replayMerkleDAGResolve(ctx context.Context, dag *evidenceDAG, rawRoot strin
 			if len(remaining) == 0 {
 				return replayedMerkleDAGNode{key: current}, nil
 			}
-			next, rest, err := resolveDAGCBORLink(raw, remaining)
+			next, rest, err := resolveIPLDLink(current.Type(), raw, remaining)
 			if err != nil {
 				return replayedMerkleDAGNode{}, err
 			}
@@ -479,10 +480,19 @@ func replayMerkleDAGResolve(ctx context.Context, dag *evidenceDAG, rawRoot strin
 	}
 }
 
-func resolveDAGCBORLink(raw []byte, segments []string) (cid.Cid, []string, error) {
+func resolveIPLDLink(codec uint64, raw []byte, segments []string) (cid.Cid, []string, error) {
 	builder := basicnode.Prototype.Any.NewBuilder()
-	if err := dagcbor.Decode(builder, bytes.NewReader(raw)); err != nil {
-		return cid.Undef, nil, fmt.Errorf("invalid DAG-CBOR evidence: %w", err)
+	var decode func(datamodel.NodeAssembler, io.Reader) error
+	switch codec {
+	case cid.DagCBOR:
+		decode = dagcbor.Decode
+	case cid.DagJSON:
+		decode = dagjson.Decode
+	default:
+		return cid.Undef, nil, fmt.Errorf("unsupported linked IPLD codec %d", codec)
+	}
+	if err := decode(builder, bytes.NewReader(raw)); err != nil {
+		return cid.Undef, nil, fmt.Errorf("invalid linked IPLD evidence: %w", err)
 	}
 	current := builder.Build()
 	for index, segment := range segments {
@@ -496,31 +506,33 @@ func resolveDAGCBORLink(raw []byte, segments []string) (cid.Cid, []string, error
 		case datamodel.Kind_List:
 			position, parseErr := strconv.ParseInt(segment, 10, 64)
 			if parseErr != nil || position < 0 {
-				err = fmt.Errorf("invalid DAG-CBOR list index")
+				err = fmt.Errorf("invalid IPLD list index")
 			} else {
 				next, err = current.LookupByIndex(position)
 			}
 		default:
-			err = fmt.Errorf("DAG-CBOR path crosses a non-container value")
+			err = fmt.Errorf("IPLD path crosses a non-container value")
 		}
 		if err != nil {
-			return cid.Undef, nil, fmt.Errorf("DAG-CBOR path not found: %w", err)
+			return cid.Undef, nil, fmt.Errorf("IPLD path not found: %w", err)
 		}
 		current = next
 		if current.Kind() == datamodel.Kind_Link {
 			link, err := current.AsLink()
 			if err != nil {
-				return cid.Undef, nil, fmt.Errorf("invalid DAG-CBOR link: %w", err)
+				return cid.Undef, nil, fmt.Errorf("invalid IPLD link: %w", err)
 			}
 			value, ok := link.(cidlink.Link)
 			if !ok {
-				return cid.Undef, nil, fmt.Errorf("DAG-CBOR link is not a CID")
+				return cid.Undef, nil, fmt.Errorf("IPLD link is not a CID")
 			}
 			return value.Cid, segments[index+1:], nil
 		}
 	}
-	return cid.Undef, nil, fmt.Errorf("DAG-CBOR path must terminate at an IPLD link")
+	return cid.Undef, nil, fmt.Errorf("IPLD path must terminate at a link")
 }
+
+func isLinkIPLDCodec(codec uint64) bool { return codec == cid.DagCBOR || codec == cid.DagJSON }
 
 type evidenceDAG struct {
 	blocks map[string]blocks.Block
@@ -678,10 +690,16 @@ func evidenceBlockLinks(block blocks.Block) ([]cid.Cid, error) {
 			out = append(out, link.Cid)
 		}
 		return out, nil
-	case cid.DagCBOR:
+	case cid.DagCBOR, cid.DagJSON:
 		builder := basicnode.Prototype.Any.NewBuilder()
-		if err := dagcbor.Decode(builder, bytes.NewReader(block.RawData())); err != nil {
-			return nil, fmt.Errorf("decode DAG-CBOR evidence links: %w", err)
+		var decode func(datamodel.NodeAssembler, io.Reader) error
+		if block.Cid().Type() == cid.DagCBOR {
+			decode = dagcbor.Decode
+		} else {
+			decode = dagjson.Decode
+		}
+		if err := decode(builder, bytes.NewReader(block.RawData())); err != nil {
+			return nil, fmt.Errorf("decode linked IPLD evidence: %w", err)
 		}
 		var out []cid.Cid
 		if err := appendIPLDLinks(builder.Build(), &out); err != nil {
@@ -732,7 +750,7 @@ func appendIPLDLinks(node datamodel.Node, out *[]cid.Cid) error {
 }
 
 func merkleDAGNodeKind(key cid.Cid, node ipld.Node) string {
-	if key.Type() == cid.DagCBOR {
+	if isLinkIPLDCodec(key.Type()) {
 		return "ipld"
 	}
 	if _, ok := node.(*merkledag.RawNode); ok {

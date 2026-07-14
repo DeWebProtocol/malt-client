@@ -297,7 +297,12 @@ func (c *Client) endpoint(route string) (*url.URL, error) {
 	if err != nil {
 		return nil, err
 	}
-	u.Path = path.Join(u.Path, route)
+	routeURL, err := url.Parse(route)
+	if err != nil {
+		return nil, err
+	}
+	u.Path = path.Join(u.Path, routeURL.Path)
+	u.RawQuery = routeURL.RawQuery
 	return u, nil
 }
 

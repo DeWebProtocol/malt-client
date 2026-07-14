@@ -23,6 +23,7 @@ var (
 	addIgnoreFileFlags  []string
 	addRootFlag         string
 	addAliasFlag        string
+	addJSONFlag         bool
 )
 
 func init() {
@@ -40,6 +41,7 @@ func init() {
 	addCmd.Flags().StringArrayVar(&addIgnoreFileFlags, "ignore-file", nil, "Additional gitignore-style ignore file to apply while adding directories")
 	addCmd.Flags().StringVar(&addRootFlag, "root", "", "Base root CID to add files under (creates a new root if empty)")
 	addCmd.Flags().StringVar(&addAliasFlag, "alias", "", "Trusted-root alias to update; the result is recorded as an untrusted candidate")
+	addCmd.Flags().BoolVar(&addJSONFlag, "json", false, "Emit the candidate-root summary as JSON")
 }
 
 var addCmd = &cobra.Command{
@@ -160,7 +162,11 @@ func runAdd(cmd *cobra.Command, args []string) error {
 		Arcs:             result.Arcs,
 		SymlinkRoots:     result.SymlinkRoots,
 	}
-	fmt.Print(formatAddSummary(summary))
+	if addJSONFlag {
+		printJSON(summary)
+	} else {
+		fmt.Print(formatAddSummary(summary))
+	}
 	return nil
 }
 

@@ -19,9 +19,14 @@ decompression; oversized and trailing JSON responses are rejected before their
 contents are trusted or returned.
 
 The transport exposes generic `Resolve` and `Read`, immutable CAS `Get`, `Put`,
-and `Has`, root creation, semantic mutation, and diagnostic verifier calls.
+`Has`, bounded `PutBatch`/`HasBatch`, root creation, semantic mutation, typed
+diagnostic metrics, and diagnostic verifier calls.
 Transport methods validate wire shape and CAS bytes, but generic resolve/read
 results remain untrusted until locally verified against caller inputs.
+
+`Metrics` returns inexpensive monotonic counters. `MetricsWithStorage` also
+requests Gateway's O(live KV entries) logical scan and should be used only by
+controlled evaluation or operator tooling.
 
 No exported signature contains a type from `internal/`.
 
@@ -44,7 +49,8 @@ The public operations are:
 - `ReadFile(ctx, trustedRoot, path)`;
 - `ReadFileRange(ctx, trustedRoot, path, offset, length)`;
 - `ReadListPayloadRange(ctx, trustedListRoot, offset, length)`; and
-- `RemovePath(ctx, trustedRoot, path)` on a writer.
+- `EmptyDirectory`, `AddDirectory`, `AddFile`, `AddFileStream`,
+  `AddFileSized`, and `RemovePath` on a writer.
 
 Read results retain their resolve and primitive-read evidence. Raw file and
 directory-manifest bytes are rehashed against authenticated CIDs. Measured-list
@@ -57,6 +63,12 @@ Only an explicit trust-store action or independent publication policy can
 accept the candidate. The trust store binds every candidate to the accepted
 base root and rejects recording or accepting it after that base becomes stale.
 
+`AddFileSized` streams directly into chunk materialization and checks the
+declared length. `AddFileStream` accepts an unknown length by spooling to the
+writer's configured temporary directory, then uses the same sized path. Both
+return an independently checked candidate root with `accepted: false`; they do
+not update trusted-root policy.
+
 ## Merkle DAG compatibility
 
 The public transport also supports:
@@ -68,7 +80,7 @@ The public transport also supports:
 Both wire profiles carry `segments` as an array of opaque UTF-8 coordinates.
 The transport and verifier do not split or reinterpret a segment, so
 coordinates such as `"."`, `".."`, `"a/b"`, `""`, and `"\u0000"` remain
-valid DAG-CBOR map keys. An empty array selects the root and is distinct from
+valid DAG-CBOR or DAG-JSON map keys. An empty array selects the root and is distinct from
 an array containing one empty-string coordinate. The profile applies only
 segment-count and per-segment byte limits; textual separator policy belongs to
 the calling application.
@@ -79,7 +91,7 @@ The corresponding `VerifyMerkleDAGResolve` and `VerifyMerkleDAGRead` helpers:
 1. bind traversal to the caller-selected root and segment array;
 2. recompute every returned block CID;
 3. reject missing, duplicate, unreachable, or unsupported evidence blocks;
-4. replay dag-pb/raw UnixFS traversal and DAG-CBOR CID-link traversal locally;
+4. replay dag-pb/raw UnixFS traversal and DAG-CBOR/DAG-JSON CID-link traversal locally;
    and
 5. reconstruct and compare requested file bytes and range metadata.
 
@@ -88,6 +100,12 @@ at most 4,096 evidence blocks, 32 MiB of raw evidence bytes, and 16 MiB of file
 data per read response.
 
 Merkle DAG evidence is intentionally not converted into a MALT ProofList.
+
+For compatibility tools that need to inspect blocks outside UnixFS, import
+`github.com/dewebprotocol/malt-client/merkledag/ipld`. Its parser verifies
+bytes against the supplied CID before decoding and exposes `ParseBlock`,
+`ResolveLink`, `GetAllLinks`, and `FollowLink`; applications may register
+additional bounded codecs.
 
 ## CLI output
 

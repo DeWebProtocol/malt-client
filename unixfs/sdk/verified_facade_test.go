@@ -290,6 +290,77 @@ func TestVerifiedWriterRemoveProducesUncheckedCandidateWithoutChangingBase(t *te
 	}
 }
 
+func TestVerifiedWriterAddsDirectoryRawAndStreamedListWithoutTrustingCandidate(t *testing.T) {
+	remote := newRealRemote(t)
+	writer, err := unixfs.NewWriter(unixfs.WriterOptions{
+		Remote:    remote,
+		Blocks:    remote,
+		Roots:     remote,
+		ChunkSize: 32,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	empty, err := writer.EmptyDirectory(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if empty.Accepted || !empty.CandidateRoot.Defined() {
+		t.Fatalf("empty result = %#v", empty)
+	}
+	directory, err := writer.AddDirectory(t.Context(), empty.CandidateRoot, "docs/generated")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if directory.Accepted || !directory.BaseRoot.Equals(empty.CandidateRoot) {
+		t.Fatalf("directory result = %#v", directory)
+	}
+	raw, err := writer.AddFile(t.Context(), directory.CandidateRoot, "docs/readme.txt", []byte("verified raw"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	largeBody := bytes.Repeat([]byte("streamed-list-"), 20)
+	large, err := writer.AddFileSized(t.Context(), raw.CandidateRoot, "docs/large.bin", bytes.NewReader(largeBody), int64(len(largeBody)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if large.Accepted || large.Size != uint64(len(largeBody)) || large.CandidateRoot.Equals(raw.CandidateRoot) {
+		t.Fatalf("large result = %#v", large)
+	}
+	read, err := writer.ReadFile(t.Context(), large.CandidateRoot, "docs/large.bin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(read.Body, largeBody) || read.ChunkSize != 32 {
+		t.Fatalf("streamed body mismatch: size=%d chunk=%d", len(read.Body), read.ChunkSize)
+	}
+	if _, err := writer.Stat(t.Context(), large.CandidateRoot, "docs/generated"); err != nil {
+		t.Fatalf("created directory missing from candidate: %v", err)
+	}
+	if _, err := writer.Stat(t.Context(), raw.CandidateRoot, "docs/large.bin"); err == nil {
+		t.Fatal("base root was changed when streamed candidate was created")
+	}
+}
+
+func TestVerifiedWriterRejectsMismatchedStreamSizeAndDirectoryReplacement(t *testing.T) {
+	remote := newRealRemote(t)
+	root := materializeTree(t, remote, map[string][]byte{"file": []byte("payload")}, 32)
+	writer, err := unixfs.NewWriter(unixfs.WriterOptions{Remote: remote, Blocks: remote, Roots: remote, ChunkSize: 32})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writer.AddFileSized(t.Context(), root, "other", bytes.NewReader([]byte("short")), 12); err == nil {
+		t.Fatal("writer accepted a short stream")
+	}
+	if _, err := writer.AddFileSized(t.Context(), root, "other", bytes.NewReader([]byte("too long")), 3); err == nil {
+		t.Fatal("writer accepted an overlong stream")
+	}
+	if _, err := writer.AddDirectory(t.Context(), root, "file/child"); err == nil {
+		t.Fatal("writer replaced an existing file with a directory")
+	}
+}
+
 func keptBody(result *unixfs.ReadResult) []byte {
 	if result == nil {
 		return nil
@@ -300,3 +371,4 @@ func keptBody(result *unixfs.ReadResult) []byte {
 var _ unixfs.Remote = (*realRemote)(nil)
 var _ unixfs.BlockStore = (*realRemote)(nil)
 var _ unixfs.StagedRootCreator = (*realRemote)(nil)
+var _ unixfs.FixedListPayloadWriter = (*realRemote)(nil)

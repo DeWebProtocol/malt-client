@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -128,14 +127,14 @@ func runDaemonServe(*cobra.Command, []string) error {
 	if err != nil {
 		return err
 	}
-	socketInfo, err := os.Lstat(cfg.Daemon.SocketPath)
+	socketInfo, err := captureDaemonEndpointIdentity(cfg.Daemon.SocketPath)
 	if err != nil {
 		_ = listener.Close()
-		return fmt.Errorf("record daemon socket identity: %w", err)
+		return fmt.Errorf("record daemon endpoint identity: %w", err)
 	}
 	defer func() {
 		_ = listener.Close()
-		_ = removeSocketIfMatch(cfg.Daemon.SocketPath, socketInfo)
+		_ = removeDaemonEndpointIfMatch(cfg.Daemon.SocketPath, socketInfo)
 	}()
 	httpServer := &http.Server{Handler: server.Handler(), ReadHeaderTimeout: 5 * time.Second}
 	ctx, stop := signal.NotifyContext(context.Background(), daemonSignals()...)
@@ -316,13 +315,6 @@ func checkDaemonInstance(socketPath, instance string) error {
 	return nil
 }
 
-func daemonHTTPClient(socketPath string) (*http.Client, *http.Transport) {
-	transport := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-		return (&net.Dialer{Timeout: time.Second}).DialContext(ctx, "unix", socketPath)
-	}}
-	return &http.Client{Transport: transport, Timeout: time.Second}, transport
-}
-
 func pidPath(socketPath string) string { return socketPath + ".pid" }
 
 func lifecycleLockPath(socketPath string) string { return socketPath + ".lifecycle.lock" }
@@ -406,20 +398,6 @@ func removeDaemonStateIfMatch(path string, expected daemonState) error {
 		return err
 	}
 	if current != expected {
-		return nil
-	}
-	return os.Remove(path)
-}
-
-func removeSocketIfMatch(path string, expected os.FileInfo) error {
-	current, err := os.Lstat(path)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil
-		}
-		return err
-	}
-	if expected == nil || !os.SameFile(current, expected) {
 		return nil
 	}
 	return os.Remove(path)

@@ -3,6 +3,7 @@ module github.com/dewebprotocol/malt-client
 go 1.25.7
 
 require (
+	github.com/Microsoft/go-winio v0.6.2
 	github.com/crackcomm/go-gitignore v0.0.0-20241020182519-7843d2ba8fdf
 	github.com/dewebprotocol/malt v0.0.6
 	github.com/ipfs/boxo v0.41.0
