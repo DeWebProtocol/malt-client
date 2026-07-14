@@ -486,6 +486,19 @@ func (i *pathImporter) importDirectory(ctx context.Context, root *os.Root, local
 		return nil, 0, 0, fmt.Errorf("read directory %s: %w", localPath, err)
 	}
 	sort.Slice(entries, func(a, b int) bool { return entries[a].Name() < entries[b].Name() })
+	type entrySnapshot struct {
+		name string
+		info fs.FileInfo
+	}
+	snapshots := make([]entrySnapshot, 0, len(entries))
+	for _, entry := range entries {
+		childPath := filepath.Join(localPath, entry.Name())
+		childInfo, err := root.Lstat(entry.Name())
+		if err != nil {
+			return nil, 0, 0, fmt.Errorf("stat directory entry %s: %w", childPath, err)
+		}
+		snapshots = append(snapshots, entrySnapshot{name: entry.Name(), info: childInfo})
+	}
 	if i.opts.Ignore != nil {
 		var err error
 		if rooted, ok := i.opts.Ignore.(RootedPathFilter); ok {
@@ -502,14 +515,10 @@ func (i *pathImporter) importDirectory(ctx context.Context, root *os.Root, local
 
 	var files int
 	var bytesUploaded int64
-	for _, entry := range entries {
-		childPath := filepath.Join(localPath, entry.Name())
-		childInfo, err := entry.Info()
-		if err != nil {
-			return nil, 0, 0, fmt.Errorf("stat directory entry %s: %w", childPath, err)
-		}
+	for _, entry := range snapshots {
+		childPath := filepath.Join(localPath, entry.name)
 		if i.opts.Ignore != nil {
-			ignored, err := i.opts.Ignore.Ignored(childPath, childInfo.IsDir())
+			ignored, err := i.opts.Ignore.Ignored(childPath, entry.info.IsDir())
 			if err != nil {
 				return nil, 0, 0, err
 			}
@@ -517,12 +526,12 @@ func (i *pathImporter) importDirectory(ctx context.Context, root *os.Root, local
 				continue
 			}
 		}
-		child, childFiles, childBytes, err := i.importPath(ctx, root, entry.Name(), childPath, childInfo)
+		child, childFiles, childBytes, err := i.importPath(ctx, root, entry.name, childPath, entry.info)
 		if err != nil {
 			return nil, 0, 0, err
 		}
-		if err := dir.AddChild(ctx, entry.Name(), child); err != nil {
-			return nil, 0, 0, fmt.Errorf("add %s to unixfs directory %s: %w", entry.Name(), localPath, err)
+		if err := dir.AddChild(ctx, entry.name, child); err != nil {
+			return nil, 0, 0, fmt.Errorf("add %s to unixfs directory %s: %w", entry.name, localPath, err)
 		}
 		files += childFiles
 		bytesUploaded += childBytes

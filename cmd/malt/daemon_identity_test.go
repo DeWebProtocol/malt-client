@@ -136,7 +136,12 @@ func TestRemoveSocketIfMatchDoesNotRemoveReplacement(t *testing.T) {
 	if err := os.WriteFile(path, []byte("old"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	oldInfo, err := os.Lstat(path)
+	oldFile, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer oldFile.Close()
+	oldInfo, err := oldFile.Stat()
 	if err != nil {
 		t.Fatal(err)
 	}
