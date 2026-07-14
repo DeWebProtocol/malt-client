@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/dewebprotocol/malt-client/merkledag"
 	cid "github.com/ipfs/go-cid"
 	"github.com/spf13/cobra"
 )
@@ -47,7 +48,11 @@ func runMerkleDAGResolve(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	result, err := remote.ResolveMerkleDAGVerified(cmd.Context(), root, segments)
+	compatibility, err := merkledag.New(remote)
+	if err != nil {
+		return err
+	}
+	result, err := compatibility.ResolveMerkleDAGVerified(cmd.Context(), root, segments)
 	if err != nil {
 		return daemonCommandError(err)
 	}
@@ -70,13 +75,17 @@ func runMerkleDAGCat(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	compatibility, err := merkledag.New(remote)
+	if err != nil {
+		return err
+	}
 	var offset, length *uint64
 	if offsetSet {
 		offsetValue, _ := cmd.Flags().GetUint64("offset")
 		lengthValue, _ := cmd.Flags().GetUint64("length")
 		offset, length = &offsetValue, &lengthValue
 	}
-	result, err := remote.ReadMerkleDAGVerified(cmd.Context(), root, segments, offset, length)
+	result, err := compatibility.ReadMerkleDAGVerified(cmd.Context(), root, segments, offset, length)
 	if err != nil {
 		return daemonCommandError(err)
 	}

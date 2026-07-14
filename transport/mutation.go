@@ -1,29 +1,14 @@
-package client
+package transport
 
 import (
 	"context"
 	"fmt"
 	"strconv"
 
-	unixfs "github.com/dewebprotocol/malt-client/unixfs/model"
 	"github.com/dewebprotocol/malt/auth/arcset"
 	"github.com/dewebprotocol/malt/mutation"
 	cid "github.com/ipfs/go-cid"
 )
-
-// UnixFSClient composes UnixFS application plans with the gateway mutation endpoint.
-type UnixFSClient struct{ client *Client }
-
-// UnixFS returns the client-side UnixFS mutation adapter.
-func (c *Client) UnixFS() *UnixFSClient { return &UnixFSClient{client: c} }
-
-// ApplyPlan materializes a plan and returns an untrusted candidate-root receipt.
-func (u *UnixFSClient) ApplyPlan(ctx context.Context, plan *unixfs.MutationPlan, fallbackRoot cid.Cid) (*SemanticMutationResponse, error) {
-	if plan == nil {
-		return nil, fmt.Errorf("unixfs mutation plan is nil")
-	}
-	return u.client.ApplySemanticMutation(ctx, plan.CoreMutation(fallbackRoot))
-}
 
 // ApplySemanticMutation materializes a semantic mutation. It does not accept
 // the returned root into any local trust store.

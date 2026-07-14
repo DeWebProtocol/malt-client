@@ -1,4 +1,4 @@
-package merkledagimport
+package importer
 
 import (
 	"bytes"

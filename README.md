@@ -90,24 +90,28 @@ The public Go API is importable as:
 
 ```go
 import (
-    client "github.com/dewebprotocol/malt-client/client"
-    unixfs "github.com/dewebprotocol/malt-client/unixfs/sdk"
+    "github.com/dewebprotocol/malt-client/merkledag"
+    "github.com/dewebprotocol/malt-client/transport"
+    "github.com/dewebprotocol/malt-client/trust"
+    "github.com/dewebprotocol/malt-client/unixfs"
 )
 ```
 
-Package `client` is an untrusted gateway transport. Package `unixfs/sdk`
+Package `transport` is an untrusted gateway transport. Package `trust` owns
+accepted/candidate root policy. Package `unixfs`
 composes it into verified `Resolve`, `Stat`, `ReadFile`, `ReadFileRange`,
 `ReadListPayloadRange`, `EmptyDirectory`, `AddDirectory`, `AddFile`, streaming
 file writes, and `RemovePath` operations. The UnixFS facade requires
 a caller-selected root, verifies ProofLists locally, enforces resolve-to-read
 continuity, and verifies raw, manifest, and measured-list payload bytes.
 
-The same transport exposes the gateway's distinct Merkle DAG compatibility
-profiles. `ResolveMerkleDAGVerified` and `ReadMerkleDAGVerified` recompute every
+Package `merkledag` owns the gateway's distinct compatibility profiles over a
+narrow profile transport. `ResolveMerkleDAGVerified` and
+`ReadMerkleDAGVerified` recompute every
 evidence block CID and replay the UnixFS link traversal locally. These results
 are never represented as MALT ProofLists.
 
-The transport also exposes bounded ordered CAS `PutBatch`/`HasBatch` and a
+The transport exposes bounded ordered CAS `PutBatch`/`HasBatch` and a
 typed diagnostic metrics snapshot. Package `merkledag/ipld` restores the
 generic CID-bound raw, DAG-PB, DAG-CBOR, DAG-JSON, and legacy JSON parser/link
 toolkit for client-side compatibility code.

@@ -1,4 +1,4 @@
-package client
+package merkledag
 
 import (
 	"bytes"
@@ -8,11 +8,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"strconv"
 	"strings"
 	"unicode/utf8"
 
+	"github.com/dewebprotocol/malt-client/transport"
 	merkledag "github.com/ipfs/boxo/ipld/merkledag"
 	unixfs "github.com/ipfs/boxo/ipld/unixfs"
 	unixfsio "github.com/ipfs/boxo/ipld/unixfs/io"
@@ -25,6 +25,29 @@ import (
 	cidlink "github.com/ipld/go-ipld-prime/linking/cid"
 	"github.com/ipld/go-ipld-prime/node/basicnode"
 )
+
+// ProfileTransport is the untrusted HTTP capability required by the Merkle
+// DAG compatibility application. It intentionally exposes no MALT
+// Resolve/Read methods and makes no trust decision.
+type ProfileTransport interface {
+	PostProfileJSON(context.Context, string, any) ([]byte, error)
+}
+
+// Client owns the Merkle DAG compatibility profile. It replays CID/link
+// evidence locally and never represents that evidence as a MALT ProofList.
+type Client struct {
+	transport ProfileTransport
+}
+
+// New constructs a compatibility client over an untrusted profile transport.
+func New(remote ProfileTransport) (*Client, error) {
+	if remote == nil {
+		return nil, fmt.Errorf("Merkle-DAG profile transport is nil")
+	}
+	return &Client{transport: remote}, nil
+}
+
+var _ ProfileTransport = (*transport.Client)(nil)
 
 const (
 	MerkleDAGResolveProfile = "merkledag.resolve/v0alpha1"
@@ -147,28 +170,7 @@ type boundedMerkleDAGBlocks []MerkleDAGBlock
 type boundedMerkleDAGReadData []byte
 
 func (c *Client) doMerkleDAG(ctx context.Context, route string, request, response any) error {
-	u, err := c.endpoint(route)
-	if err != nil {
-		return err
-	}
-	body, err := json.Marshal(request)
-	if err != nil {
-		return err
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u.String(), bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return c.responseError(resp)
-	}
-	data, err := readBounded(resp.Body, c.maxJSONResponseBytes, "gateway Merkle-DAG JSON response")
+	data, err := c.transport.PostProfileJSON(ctx, route, request)
 	if err != nil {
 		return err
 	}

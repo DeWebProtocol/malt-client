@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dewebprotocol/malt-client/internal/truststore"
+	truststore "github.com/dewebprotocol/malt-client/trust"
 )
 
 func TestLifecycleIdentityIsAuthenticatedAndNotExposedByHealth(t *testing.T) {

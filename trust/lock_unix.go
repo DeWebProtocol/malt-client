@@ -1,11 +1,10 @@
-//go:build windows
+//go:build linux || darwin || freebsd || netbsd || openbsd || dragonfly
 
-package truststore
+package trust
 
 import (
 	"os"
-
-	"golang.org/x/sys/windows"
+	"syscall"
 )
 
 func acquireTrustStoreLock(path string) (func() error, error) {
@@ -13,13 +12,16 @@ func acquireTrustStoreLock(path string) (func() error, error) {
 	if err != nil {
 		return nil, err
 	}
-	overlapped := new(windows.Overlapped)
-	if err := windows.LockFileEx(windows.Handle(file.Fd()), windows.LOCKFILE_EXCLUSIVE_LOCK, 0, 1, 0, overlapped); err != nil {
+	if err := os.Chmod(path, 0o600); err != nil {
+		_ = file.Close()
+		return nil, err
+	}
+	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX); err != nil {
 		_ = file.Close()
 		return nil, err
 	}
 	return func() error {
-		unlockErr := windows.UnlockFileEx(windows.Handle(file.Fd()), 0, 1, 0, overlapped)
+		unlockErr := syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
 		closeErr := file.Close()
 		if unlockErr != nil {
 			return unlockErr

@@ -5,9 +5,9 @@ import (
 	"fmt"
 
 	malt "github.com/dewebprotocol/malt"
-	gatewayclient "github.com/dewebprotocol/malt-client/client"
+	gatewayclient "github.com/dewebprotocol/malt-client/transport"
+	unixfs "github.com/dewebprotocol/malt-client/unixfs"
 	unixfsmodel "github.com/dewebprotocol/malt-client/unixfs/model"
-	unixfs "github.com/dewebprotocol/malt-client/unixfs/sdk"
 	"github.com/dewebprotocol/malt/protocol"
 	clientverifier "github.com/dewebprotocol/malt/sdk/verifier"
 	"github.com/dewebprotocol/malt/wire/maltcid"

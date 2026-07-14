@@ -3,8 +3,8 @@ package main
 import (
 	"fmt"
 
-	client "github.com/dewebprotocol/malt-client/client"
-	unixfs "github.com/dewebprotocol/malt-client/unixfs/sdk"
+	client "github.com/dewebprotocol/malt-client/transport"
+	unixfs "github.com/dewebprotocol/malt-client/unixfs"
 	"github.com/spf13/cobra"
 )
 

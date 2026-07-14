@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	casmemory "github.com/dewebprotocol/malt-client/internal/cas/memory"
-	unixfs "github.com/dewebprotocol/malt-client/unixfs/sdk"
+	unixfs "github.com/dewebprotocol/malt-client/unixfs"
 	"github.com/dewebprotocol/malt/auth/arcset"
 	materialmemory "github.com/dewebprotocol/malt/auth/arcset/materializer/memory"
 	"github.com/dewebprotocol/malt/execution"

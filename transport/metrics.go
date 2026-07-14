@@ -1,4 +1,4 @@
-package client
+package transport
 
 import (
 	"context"
@@ -49,6 +49,7 @@ type StorageMetrics struct {
 	CASMetadataBytes   uint64 `json:"cas_metadata_bytes"`
 	ArcTableBytes      uint64 `json:"arc_table_bytes"`
 	ScopeMetadataBytes uint64 `json:"scope_metadata_bytes"`
+	PublicationBytes   uint64 `json:"publication_bytes"`
 	UnclassifiedBytes  uint64 `json:"unclassified_bytes"`
 }
 

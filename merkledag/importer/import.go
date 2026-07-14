@@ -1,5 +1,5 @@
 // Package merkledagimport imports local UnixFS data into an IPFS-style Merkle DAG.
-package merkledagimport
+package importer
 
 import (
 	"bytes"

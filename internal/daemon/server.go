@@ -12,7 +12,7 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/dewebprotocol/malt-client/internal/truststore"
+	truststore "github.com/dewebprotocol/malt-client/trust"
 )
 
 const lifecycleInstanceHeader = "X-Malt-Client-Instance"

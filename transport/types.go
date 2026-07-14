@@ -1,4 +1,4 @@
-package client
+package transport
 
 // HealthResponse is returned by the managed gateway health endpoint.
 type HealthResponse struct {

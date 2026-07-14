@@ -1,4 +1,4 @@
-package client_test
+package transport_test
 
 import (
 	"encoding/json"
@@ -8,8 +8,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	client "github.com/dewebprotocol/malt-client/client"
 	"github.com/dewebprotocol/malt-client/internal/cas"
+	client "github.com/dewebprotocol/malt-client/transport"
 	"github.com/dewebprotocol/malt/auth/proof/prooflist"
 	"github.com/dewebprotocol/malt/protocol"
 	cid "github.com/ipfs/go-cid"

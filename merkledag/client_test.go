@@ -1,4 +1,4 @@
-package client_test
+package merkledag_test
 
 import (
 	"bytes"
@@ -11,9 +11,11 @@ import (
 	"sync"
 	"testing"
 
-	client "github.com/dewebprotocol/malt-client/client"
+	"github.com/dewebprotocol/malt-client/internal/cas"
 	casmemory "github.com/dewebprotocol/malt-client/internal/cas/memory"
-	"github.com/dewebprotocol/malt-client/internal/merkledagimport"
+	"github.com/dewebprotocol/malt-client/merkledag"
+	merkledagimport "github.com/dewebprotocol/malt-client/merkledag/importer"
+	client "github.com/dewebprotocol/malt-client/transport"
 	unixfsio "github.com/ipfs/boxo/ipld/unixfs/io"
 	cid "github.com/ipfs/go-cid"
 	ipld "github.com/ipfs/go-ipld-format"
@@ -53,12 +55,12 @@ func (s *recordingCAS) PutWithCodec(ctx context.Context, data []byte, codec uint
 	return s.inner.PutWithCodec(ctx, data, codec)
 }
 
-func (s *recordingCAS) evidence() []client.MerkleDAGBlock {
+func (s *recordingCAS) evidence() []merkledag.MerkleDAGBlock {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	out := make([]client.MerkleDAGBlock, 0, len(s.order))
+	out := make([]merkledag.MerkleDAGBlock, 0, len(s.order))
 	for _, key := range s.order {
-		out = append(out, client.MerkleDAGBlock{CID: key.String(), Codec: key.Type(), Data: append([]byte(nil), s.data[key.KeyString()]...)})
+		out = append(out, merkledag.MerkleDAGBlock{CID: key.String(), Codec: key.Type(), Data: append([]byte(nil), s.data[key.KeyString()]...)})
 	}
 	return out
 }
@@ -102,9 +104,9 @@ func TestMerkleDAGCompatibilityVerifierReplaysPathAndFileRange(t *testing.T) {
 
 	resolveStore := newRecordingCAS(store)
 	node, _ := replayTestPath(t, resolveStore, root, segments)
-	resolveRequest := client.MerkleDAGResolveRequest{Profile: client.MerkleDAGResolveProfile, Root: root.String(), Segments: segments}
-	resolveResponse := client.MerkleDAGResolveResponse{Profile: client.MerkleDAGResolveProfile, Target: node.Cid().String(), Kind: "file", Blocks: resolveStore.evidence()}
-	if err := client.VerifyMerkleDAGResolve(t.Context(), resolveRequest, resolveResponse); err != nil {
+	resolveRequest := merkledag.MerkleDAGResolveRequest{Profile: merkledag.MerkleDAGResolveProfile, Root: root.String(), Segments: segments}
+	resolveResponse := merkledag.MerkleDAGResolveResponse{Profile: merkledag.MerkleDAGResolveProfile, Target: node.Cid().String(), Kind: "file", Blocks: resolveStore.evidence()}
+	if err := merkledag.VerifyMerkleDAGResolve(t.Context(), resolveRequest, resolveResponse); err != nil {
 		t.Fatalf("verify resolve: %v", err)
 	}
 
@@ -123,26 +125,26 @@ func TestMerkleDAGCompatibilityVerifierReplaysPathAndFileRange(t *testing.T) {
 	if _, err := io.ReadFull(reader, body); err != nil {
 		t.Fatal(err)
 	}
-	readRequest := client.MerkleDAGReadRequest{Profile: client.MerkleDAGReadProfile, Root: root.String(), Segments: segments, Offset: &offset, Length: &length}
-	readResponse := client.MerkleDAGReadResponse{
-		Profile: client.MerkleDAGReadProfile, Target: node.Cid().String(), Kind: "file", TotalSize: reader.Size(), Offset: offset, Length: length, Data: body, Blocks: readStore.evidence(),
+	readRequest := merkledag.MerkleDAGReadRequest{Profile: merkledag.MerkleDAGReadProfile, Root: root.String(), Segments: segments, Offset: &offset, Length: &length}
+	readResponse := merkledag.MerkleDAGReadResponse{
+		Profile: merkledag.MerkleDAGReadProfile, Target: node.Cid().String(), Kind: "file", TotalSize: reader.Size(), Offset: offset, Length: length, Data: body, Blocks: readStore.evidence(),
 	}
-	if err := client.VerifyMerkleDAGRead(t.Context(), readRequest, readResponse); err != nil {
+	if err := merkledag.VerifyMerkleDAGRead(t.Context(), readRequest, readResponse); err != nil {
 		t.Fatalf("verify read: %v", err)
 	}
 
 	tampered := readResponse
 	tampered.Data = append([]byte(nil), readResponse.Data...)
 	tampered.Data[0] ^= 0xff
-	if err := client.VerifyMerkleDAGRead(t.Context(), readRequest, tampered); err == nil {
+	if err := merkledag.VerifyMerkleDAGRead(t.Context(), readRequest, tampered); err == nil {
 		t.Fatal("read verifier accepted tampered response bytes")
 	}
 
 	tampered = readResponse
-	tampered.Blocks = append([]client.MerkleDAGBlock(nil), readResponse.Blocks...)
+	tampered.Blocks = append([]merkledag.MerkleDAGBlock(nil), readResponse.Blocks...)
 	tampered.Blocks[0].Data = append([]byte(nil), tampered.Blocks[0].Data...)
 	tampered.Blocks[0].Data[0] ^= 0xff
-	if err := client.VerifyMerkleDAGRead(t.Context(), readRequest, tampered); err == nil {
+	if err := merkledag.VerifyMerkleDAGRead(t.Context(), readRequest, tampered); err == nil {
 		t.Fatal("read verifier accepted evidence bytes that do not match their CID")
 	}
 }
@@ -150,27 +152,27 @@ func TestMerkleDAGCompatibilityVerifierReplaysPathAndFileRange(t *testing.T) {
 func TestMerkleDAGVerifiedClientPreservesEmptyRootIdentitySegments(t *testing.T) {
 	payload := []byte("root file")
 	root := mustBlockCID(t, payload)
-	evidence := []client.MerkleDAGBlock{{CID: root.String(), Codec: root.Type(), Data: payload}}
+	evidence := []merkledag.MerkleDAGBlock{{CID: root.String(), Codec: root.Type(), Data: payload}}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/compat/merkledag/resolve":
-			var request client.MerkleDAGResolveRequest
+			var request merkledag.MerkleDAGResolveRequest
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatal(err)
 			}
 			if request.Segments == nil || len(request.Segments) != 0 {
 				t.Fatalf("root resolve segments = %#v, want non-nil empty", request.Segments)
 			}
-			_ = json.NewEncoder(w).Encode(client.MerkleDAGResolveResponse{Profile: client.MerkleDAGResolveProfile, Target: root.String(), Kind: "file", Blocks: evidence})
+			_ = json.NewEncoder(w).Encode(merkledag.MerkleDAGResolveResponse{Profile: merkledag.MerkleDAGResolveProfile, Target: root.String(), Kind: "file", Blocks: evidence})
 		case "/v1/compat/merkledag/read":
-			var request client.MerkleDAGReadRequest
+			var request merkledag.MerkleDAGReadRequest
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatal(err)
 			}
 			if request.Segments == nil || len(request.Segments) != 0 {
 				t.Fatalf("root read segments = %#v, want non-nil empty", request.Segments)
 			}
-			_ = json.NewEncoder(w).Encode(client.MerkleDAGReadResponse{Profile: client.MerkleDAGReadProfile, Target: root.String(), Kind: "file", TotalSize: uint64(len(payload)), Length: uint64(len(payload)), Data: payload, Blocks: evidence})
+			_ = json.NewEncoder(w).Encode(merkledag.MerkleDAGReadResponse{Profile: merkledag.MerkleDAGReadProfile, Target: root.String(), Kind: "file", TotalSize: uint64(len(payload)), Length: uint64(len(payload)), Data: payload, Blocks: evidence})
 		default:
 			http.NotFound(w, r)
 		}
@@ -180,10 +182,14 @@ func TestMerkleDAGVerifiedClientPreservesEmptyRootIdentitySegments(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := transport.ResolveMerkleDAGVerified(t.Context(), root, []string{}); err != nil {
+	compatibility, err := merkledag.New(transport)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := compatibility.ResolveMerkleDAGVerified(t.Context(), root, []string{}); err != nil {
 		t.Fatalf("verified root resolve: %v", err)
 	}
-	result, err := transport.ReadMerkleDAGVerified(t.Context(), root, []string{}, nil, nil)
+	result, err := compatibility.ReadMerkleDAGVerified(t.Context(), root, []string{}, nil, nil)
 	if err != nil {
 		t.Fatalf("verified root read: %v", err)
 	}
@@ -218,22 +224,22 @@ func TestMerkleDAGResolveVerifierReplaysDAGCBORLinksAndRejectsUnusedEvidence(t *
 		t.Fatal(err)
 	}
 	root := cid.NewCidV1(cid.DagCBOR, hash)
-	request := client.MerkleDAGResolveRequest{Profile: client.MerkleDAGResolveProfile, Root: root.String(), Segments: []string{"file"}}
-	response := client.MerkleDAGResolveResponse{
-		Profile: client.MerkleDAGResolveProfile,
+	request := merkledag.MerkleDAGResolveRequest{Profile: merkledag.MerkleDAGResolveProfile, Root: root.String(), Segments: []string{"file"}}
+	response := merkledag.MerkleDAGResolveResponse{
+		Profile: merkledag.MerkleDAGResolveProfile,
 		Target:  target.String(),
 		Kind:    "file",
-		Blocks: []client.MerkleDAGBlock{
+		Blocks: []merkledag.MerkleDAGBlock{
 			{CID: root.String(), Codec: cid.DagCBOR, Data: encoded.Bytes()},
 			{CID: target.String(), Codec: cid.Raw, Data: payload},
 		},
 	}
-	if err := client.VerifyMerkleDAGResolve(t.Context(), request, response); err != nil {
+	if err := merkledag.VerifyMerkleDAGResolve(t.Context(), request, response); err != nil {
 		t.Fatalf("verify DAG-CBOR link traversal: %v", err)
 	}
 	unused := mustBlockCID(t, []byte("unused"))
-	response.Blocks = append(response.Blocks, client.MerkleDAGBlock{CID: unused.String(), Codec: cid.Raw, Data: []byte("unused")})
-	if err := client.VerifyMerkleDAGResolve(t.Context(), request, response); err == nil {
+	response.Blocks = append(response.Blocks, merkledag.MerkleDAGBlock{CID: unused.String(), Codec: cid.Raw, Data: []byte("unused")})
+	if err := merkledag.VerifyMerkleDAGResolve(t.Context(), request, response); err == nil {
 		t.Fatal("resolve verifier accepted unused evidence")
 	}
 }
@@ -264,17 +270,17 @@ func TestMerkleDAGResolveVerifierReplaysDAGJSONLinks(t *testing.T) {
 		t.Fatal(err)
 	}
 	root := cid.NewCidV1(cid.DagJSON, hash)
-	request := client.MerkleDAGResolveRequest{Profile: client.MerkleDAGResolveProfile, Root: root.String(), Segments: []string{"file"}}
-	response := client.MerkleDAGResolveResponse{
-		Profile: client.MerkleDAGResolveProfile,
+	request := merkledag.MerkleDAGResolveRequest{Profile: merkledag.MerkleDAGResolveProfile, Root: root.String(), Segments: []string{"file"}}
+	response := merkledag.MerkleDAGResolveResponse{
+		Profile: merkledag.MerkleDAGResolveProfile,
 		Target:  target.String(),
 		Kind:    "file",
-		Blocks: []client.MerkleDAGBlock{
+		Blocks: []merkledag.MerkleDAGBlock{
 			{CID: root.String(), Codec: cid.DagJSON, Data: encoded.Bytes()},
 			{CID: target.String(), Codec: cid.Raw, Data: payload},
 		},
 	}
-	if err := client.VerifyMerkleDAGResolve(t.Context(), request, response); err != nil {
+	if err := merkledag.VerifyMerkleDAGResolve(t.Context(), request, response); err != nil {
 		t.Fatalf("verify DAG-JSON resolve: %v", err)
 	}
 }
@@ -316,18 +322,18 @@ func TestMerkleDAGResolveTreatsTypedDAGCBORMapSegmentsAsOpaqueKeys(t *testing.T)
 				t.Fatal(err)
 			}
 			root := cid.NewCidV1(cid.DagCBOR, hash)
-			request := client.MerkleDAGResolveRequest{
-				Profile: client.MerkleDAGResolveProfile,
+			request := merkledag.MerkleDAGResolveRequest{
+				Profile: merkledag.MerkleDAGResolveProfile,
 				Root:    root.String(), Segments: []string{test.key},
 			}
-			response := client.MerkleDAGResolveResponse{
-				Profile: client.MerkleDAGResolveProfile, Target: target.String(), Kind: "file",
-				Blocks: []client.MerkleDAGBlock{
+			response := merkledag.MerkleDAGResolveResponse{
+				Profile: merkledag.MerkleDAGResolveProfile, Target: target.String(), Kind: "file",
+				Blocks: []merkledag.MerkleDAGBlock{
 					{CID: root.String(), Codec: cid.DagCBOR, Data: encoded.Bytes()},
 					{CID: target.String(), Codec: cid.Raw, Data: payload},
 				},
 			}
-			if err := client.VerifyMerkleDAGResolve(t.Context(), request, response); err != nil {
+			if err := merkledag.VerifyMerkleDAGResolve(t.Context(), request, response); err != nil {
 				t.Fatalf("verify opaque key %q: %v", test.key, err)
 			}
 		})
@@ -336,8 +342,8 @@ func TestMerkleDAGResolveTreatsTypedDAGCBORMapSegmentsAsOpaqueKeys(t *testing.T)
 
 func TestMerkleDAGVerifierEnforcesProfileResourceLimits(t *testing.T) {
 	root := mustBlockCID(t, []byte("root"))
-	request := client.MerkleDAGResolveRequest{Profile: client.MerkleDAGResolveProfile, Root: root.String(), Segments: []string{}}
-	response := client.MerkleDAGResolveResponse{Profile: client.MerkleDAGResolveProfile, Target: root.String(), Kind: "file"}
+	request := merkledag.MerkleDAGResolveRequest{Profile: merkledag.MerkleDAGResolveProfile, Root: root.String(), Segments: []string{}}
+	response := merkledag.MerkleDAGResolveResponse{Profile: merkledag.MerkleDAGResolveProfile, Target: root.String(), Kind: "file"}
 	for name, segments := range map[string][]string{
 		"missing":   nil,
 		"too many":  make([]string, 257),
@@ -347,31 +353,31 @@ func TestMerkleDAGVerifierEnforcesProfileResourceLimits(t *testing.T) {
 		t.Run("segments "+name, func(t *testing.T) {
 			invalid := request
 			invalid.Segments = segments
-			if err := client.VerifyMerkleDAGResolve(t.Context(), invalid, response); err == nil {
+			if err := merkledag.VerifyMerkleDAGResolve(t.Context(), invalid, response); err == nil {
 				t.Fatalf("accepted invalid typed segments %#v", segments)
 			}
 		})
 	}
-	response.Blocks = make([]client.MerkleDAGBlock, 4097)
-	if err := client.VerifyMerkleDAGResolve(t.Context(), request, response); err == nil {
+	response.Blocks = make([]merkledag.MerkleDAGBlock, 4097)
+	if err := merkledag.VerifyMerkleDAGResolve(t.Context(), request, response); err == nil {
 		t.Fatal("resolve verifier accepted more than 4096 evidence blocks")
 	}
 
 	shared := make([]byte, 8193)
-	response.Blocks = make([]client.MerkleDAGBlock, 4096)
+	response.Blocks = make([]merkledag.MerkleDAGBlock, 4096)
 	for i := range response.Blocks {
 		response.Blocks[i].Data = shared
 	}
-	if err := client.VerifyMerkleDAGResolve(t.Context(), request, response); err == nil {
+	if err := merkledag.VerifyMerkleDAGResolve(t.Context(), request, response); err == nil {
 		t.Fatal("resolve verifier accepted more than 32 MiB of raw evidence")
 	}
 
-	readRequest := client.MerkleDAGReadRequest{Profile: client.MerkleDAGReadProfile, Root: root.String(), Segments: []string{}}
-	readResponse := client.MerkleDAGReadResponse{
-		Profile: client.MerkleDAGReadProfile, Target: root.String(), Kind: "file", Length: (16 << 20) + 1,
-		Blocks: []client.MerkleDAGBlock{{CID: root.String(), Codec: cid.Raw, Data: []byte("root")}},
+	readRequest := merkledag.MerkleDAGReadRequest{Profile: merkledag.MerkleDAGReadProfile, Root: root.String(), Segments: []string{}}
+	readResponse := merkledag.MerkleDAGReadResponse{
+		Profile: merkledag.MerkleDAGReadProfile, Target: root.String(), Kind: "file", Length: (16 << 20) + 1,
+		Blocks: []merkledag.MerkleDAGBlock{{CID: root.String(), Codec: cid.Raw, Data: []byte("root")}},
 	}
-	if err := client.VerifyMerkleDAGRead(t.Context(), readRequest, readResponse); err == nil {
+	if err := merkledag.VerifyMerkleDAGRead(t.Context(), readRequest, readResponse); err == nil {
 		t.Fatal("read verifier accepted a response above the 16 MiB profile limit")
 	}
 }
@@ -394,12 +400,25 @@ func TestMerkleDAGTransportBoundsBlockSliceDuringDecode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = transport.ResolveMerkleDAG(t.Context(), client.MerkleDAGResolveRequest{
-		Profile:  client.MerkleDAGResolveProfile,
+	compatibility, err := merkledag.New(transport)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = compatibility.ResolveMerkleDAG(t.Context(), merkledag.MerkleDAGResolveRequest{
+		Profile:  merkledag.MerkleDAGResolveProfile,
 		Root:     root.String(),
 		Segments: []string{},
 	})
 	if err == nil || !strings.Contains(err.Error(), "4096-block profile limit") {
 		t.Fatalf("structurally amplified response error = %v", err)
 	}
+}
+
+func mustBlockCID(t *testing.T, data []byte) cid.Cid {
+	t.Helper()
+	key, err := cas.CIDForBlock(cas.Block{Data: data, Codec: cid.Raw})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return key
 }

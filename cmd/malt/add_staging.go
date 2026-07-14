@@ -9,8 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	gatewayclient "github.com/dewebprotocol/malt-client/client"
-	"github.com/dewebprotocol/malt-client/unixfs/sdk"
+	gatewayclient "github.com/dewebprotocol/malt-client/transport"
+	"github.com/dewebprotocol/malt-client/unixfs"
 	cid "github.com/ipfs/go-cid"
 )
 
