@@ -4,6 +4,7 @@ package daemon
 
 import (
 	"bytes"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,20 +14,31 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/dewebprotocol/malt-client/internal/truststore"
 )
 
+const lifecycleInstanceHeader = "X-Malt-Client-Instance"
+
 type Server struct {
-	store *truststore.Store
-	mux   *http.ServeMux
+	store    *truststore.Store
+	mux      *http.ServeMux
+	instance string
 }
 
 func New(store *truststore.Store) (*Server, error) {
+	return NewWithInstance(store, "")
+}
+
+// NewWithInstance constructs a daemon server whose health response is bound to
+// a process-launch token. The CLI uses this identity to avoid signaling a
+// recycled PID from stale metadata.
+func NewWithInstance(store *truststore.Store, instance string) (*Server, error) {
 	if store == nil {
 		return nil, fmt.Errorf("trust store is nil")
 	}
-	s := &Server{store: store, mux: http.NewServeMux()}
+	s := &Server{store: store, mux: http.NewServeMux(), instance: instance}
 	s.routes()
 	return s, nil
 }
@@ -58,8 +70,21 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "role": "trusted-client"})
 	})
+	s.mux.HandleFunc("GET /_lifecycle/identity", func(w http.ResponseWriter, r *http.Request) {
+		provided := r.Header.Get(lifecycleInstanceHeader)
+		if s.instance == "" || len(provided) != len(s.instance) || subtle.ConstantTimeCompare([]byte(provided), []byte(s.instance)) != 1 {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "daemon lifecycle identity mismatch"})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	})
 	s.mux.HandleFunc("GET /v1/roots", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]any{"roots": s.store.List()})
+		roots, err := s.store.List()
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"roots": roots})
 	})
 	s.mux.HandleFunc("GET /v1/roots/{alias}", func(w http.ResponseWriter, r *http.Request) {
 		record, err := s.store.Get(r.PathValue("alias"))
@@ -124,6 +149,11 @@ func removeStaleSocket(path string) error {
 	}
 	if info.Mode()&os.ModeSocket == 0 {
 		return fmt.Errorf("refusing to replace non-socket path %s", path)
+	}
+	conn, dialErr := net.DialTimeout("unix", path, 250*time.Millisecond)
+	if dialErr == nil {
+		_ = conn.Close()
+		return fmt.Errorf("refusing to replace live socket %s", path)
 	}
 	return os.Remove(path)
 }

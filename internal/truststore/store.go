@@ -56,39 +56,32 @@ func Open(path string) (*Store, error) {
 		return nil, fmt.Errorf("trust-store path is empty")
 	}
 	s := &Store{path: path, state: state{Version: 1, Roots: map[string]Record{}}}
-	data, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		return s, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("read trust store: %w", err)
-	}
-	if err := json.Unmarshal(data, &s.state); err != nil {
-		return nil, fmt.Errorf("decode trust store: %w", err)
-	}
-	if s.state.Version != 1 {
-		return nil, fmt.Errorf("unsupported trust-store version %d", s.state.Version)
-	}
-	if s.state.Roots == nil {
-		s.state.Roots = map[string]Record{}
+	if err := s.withLockedState(func() error { return nil }); err != nil {
+		return nil, err
 	}
 	return s, nil
 }
 
-func (s *Store) List() []Record {
+func (s *Store) List() ([]Record, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := s.reloadWithFileLock(); err != nil {
+		return nil, err
+	}
 	out := make([]Record, 0, len(s.state.Roots))
 	for _, record := range s.state.Roots {
 		out = append(out, cloneRecord(record))
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Alias < out[j].Alias })
-	return out
+	return out, nil
 }
 
 func (s *Store) Get(alias string) (Record, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := s.reloadWithFileLock(); err != nil {
+		return Record{}, err
+	}
 	record, ok := s.state.Roots[normalizeAlias(alias)]
 	if !ok {
 		return Record{}, ErrNotFound
@@ -106,6 +99,11 @@ func (s *Store) Trust(alias, root, profile, gateway, source string) (Record, err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	unlock, err := s.lockAndReload()
+	if err != nil {
+		return Record{}, err
+	}
+	defer func() { _ = unlock() }()
 	record := s.state.Roots[alias]
 	previous := record.AcceptedRoot
 	record.Alias = alias
@@ -130,6 +128,11 @@ func (s *Store) AddCandidate(alias, root, baseRoot, source string) (Record, erro
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	unlock, err := s.lockAndReload()
+	if err != nil {
+		return Record{}, err
+	}
+	defer func() { _ = unlock() }()
 	record, ok := s.state.Roots[alias]
 	if !ok {
 		return Record{}, ErrNotFound
@@ -152,6 +155,11 @@ func (s *Store) AcceptCandidate(alias, root, source string) (Record, error) {
 	alias = normalizeAlias(alias)
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	unlock, err := s.lockAndReload()
+	if err != nil {
+		return Record{}, err
+	}
+	defer func() { _ = unlock() }()
 	record, ok := s.state.Roots[alias]
 	if !ok {
 		return Record{}, ErrNotFound
@@ -176,6 +184,63 @@ func (s *Store) AcceptCandidate(alias, root, source string) (Record, error) {
 		return Record{}, err
 	}
 	return cloneRecord(record), nil
+}
+
+func (s *Store) reloadWithFileLock() error {
+	unlock, err := s.lockAndReload()
+	if err != nil {
+		return err
+	}
+	return unlock()
+}
+
+func (s *Store) withLockedState(operation func() error) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	unlock, err := s.lockAndReload()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = unlock() }()
+	return operation()
+}
+
+func (s *Store) lockAndReload() (func() error, error) {
+	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
+		return nil, fmt.Errorf("create trust-store directory: %w", err)
+	}
+	unlock, err := acquireTrustStoreLock(s.path + ".lock")
+	if err != nil {
+		return nil, fmt.Errorf("lock trust store: %w", err)
+	}
+	if err := s.reloadLocked(); err != nil {
+		_ = unlock()
+		return nil, err
+	}
+	return unlock, nil
+}
+
+func (s *Store) reloadLocked() error {
+	data, err := os.ReadFile(s.path)
+	if errors.Is(err, os.ErrNotExist) {
+		s.state = state{Version: 1, Roots: map[string]Record{}}
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read trust store: %w", err)
+	}
+	var next state
+	if err := json.Unmarshal(data, &next); err != nil {
+		return fmt.Errorf("decode trust store: %w", err)
+	}
+	if next.Version != 1 {
+		return fmt.Errorf("unsupported trust-store version %d", next.Version)
+	}
+	if next.Roots == nil {
+		next.Roots = map[string]Record{}
+	}
+	s.state = next
+	return nil
 }
 
 func (s *Store) writeLocked() error {

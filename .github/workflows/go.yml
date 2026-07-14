@@ -29,3 +29,22 @@ jobs:
         run: go vet ./...
       - name: Build client
         run: go build -buildvcs=false ./...
+
+  cross-platform-build:
+    name: Build (${{ matrix.goos }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        goos: [linux, darwin, windows]
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Compile all packages
+        env:
+          GOOS: ${{ matrix.goos }}
+        run: go test -run '^$' -exec=true ./...

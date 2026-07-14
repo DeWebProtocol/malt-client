@@ -3,8 +3,8 @@
 ## Scope
 
 This repository owns the trusted MALT client application: CLI, local daemon,
-accepted-root policy, UnixFS application semantics, gateway transport, and
-payload-byte verification.
+accepted-root policy, UnixFS application semantics, Merkle DAG import
+compatibility, gateway transport, and payload-byte verification.
 
 ## Boundaries
 
@@ -18,6 +18,8 @@ payload-byte verification.
   acceptance or an independent root-publication policy.
 - Keep application separators and UnixFS path rules in this repository. Pass
   typed segment arrays to MALT core.
+- Keep IPFS-style Merkle DAG import and compatibility policy here. A Merkle DAG
+  root is a compatibility output, not a MALT-authenticated root or ProofList.
 
 ## Validation
 

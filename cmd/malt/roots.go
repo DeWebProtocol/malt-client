@@ -38,7 +38,11 @@ var rootListCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		printJSON(map[string]any{"roots": store.List()})
+		roots, err := store.List()
+		if err != nil {
+			return err
+		}
+		printJSON(map[string]any{"roots": roots})
 		return nil
 	},
 }
