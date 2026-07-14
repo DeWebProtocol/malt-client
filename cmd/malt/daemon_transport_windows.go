@@ -6,6 +6,7 @@ import (
 	"context"
 	"net"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/Microsoft/go-winio"
@@ -26,3 +27,8 @@ func captureDaemonEndpointIdentity(string) (daemonEndpointIdentity, error) {
 }
 
 func removeDaemonEndpointIfMatch(string, daemonEndpointIdentity) error { return nil }
+
+// removeSocketIfMatch is retained only so the cross-platform lifecycle test
+// package compiles under GOOS=windows. Named pipes have no filesystem socket
+// entry to unlink.
+func removeSocketIfMatch(string, os.FileInfo) error { return nil }
