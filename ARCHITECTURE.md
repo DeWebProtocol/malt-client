@@ -93,6 +93,14 @@ UnixFS or Merkle DAG reads, records mutation results as candidates, and exposes
 explicit candidate acceptance for both CLI and daemon adapters. The `trust`
 package alone persists accepted roots and performs promotion.
 
+An explicit CID is parsed before any accepted-root alias lookup. Consequently,
+explicit-CID resolve/read/write operations do not require the alias store to
+exist or be readable; only alias selection opens that local state. Generic
+transport exposes canonical root-structure creation, while the UnixFS gateway
+adapter owns the `@payload` empty-root binding needed by fixed-list
+materialization. The same adapter binds mutation receipts to the gateway's
+returned base root and rejects a response for any other requested root.
+
 ## Verified UnixFS facade
 
 `unixfs` owns the transport-neutral native reader/writer facade. Its remote

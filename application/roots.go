@@ -31,15 +31,28 @@ func NewRoots(policy trust.Policy) (*Roots, error) {
 	return &Roots{policy: policy}, nil
 }
 
+// NewExplicitRootSelector returns a selector that accepts caller-supplied CIDs
+// without consulting local trusted-root state. It deliberately cannot resolve
+// aliases or mutate accepted/candidate-root records.
+//
+// This selector keeps explicit-CID operations available even when the optional
+// alias store is missing, corrupt, or not writable.
+func NewExplicitRootSelector() *Roots {
+	return &Roots{}
+}
+
 // Select resolves an explicit CID or an accepted alias. It never falls back to
 // a candidate root or an untrusted network value.
 func (r *Roots) Select(raw string) (RootSelection, error) {
-	if r == nil || r.policy == nil {
+	if r == nil {
 		return RootSelection{}, fmt.Errorf("trusted-root application is nil")
 	}
 	raw = strings.TrimSpace(raw)
 	if root, err := cid.Parse(raw); err == nil {
 		return RootSelection{Root: root}, nil
+	}
+	if r.policy == nil {
+		return RootSelection{}, fmt.Errorf("%q is not an explicit CID", raw)
 	}
 	root, record, err := trust.AcceptedRoot(r.policy, raw)
 	if err != nil {

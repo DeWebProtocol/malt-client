@@ -22,6 +22,11 @@ This is an experimental, pre-v1 client. It currently provides the `malt` CLI,
 a local trusted-root daemon, and a UnixFS application adapter. There is no
 independent `malt-client` release tag yet; build from a pinned commit.
 
+The current development baseline pins MALT core commit `97838dc7ab61` from
+[core PR #169](https://github.com/DeWebProtocol/malt/pull/169) through Go
+pseudo-version `v0.0.7-0.20260715072445-97838dc7ab61`. This is an exact
+integration dependency, not a claim that MALT core v0.0.7 has been released.
+
 ## Build
 
 Go 1.25.7 or newer is required.
@@ -104,6 +109,10 @@ and Merkle DAG reads, records writer results as candidates, and exposes
 candidate promotion only as an explicit call. Its `application/add` package
 owns the CLI-independent ignore, symlink, staging, hybrid materialization, and
 Merkle DAG import workflow used by `malt add`.
+
+Explicit CIDs are selected without opening `roots.json`; the trust store is
+required only for an alias. A missing, corrupt, or unwritable alias store
+therefore cannot block an otherwise valid explicit-CID operation.
 
 Package `transport` is an untrusted gateway transport. Package `trust` owns
 accepted/candidate root policy. Package `unixfs`

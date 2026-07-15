@@ -33,11 +33,7 @@ func daemonCommandError(err error) error {
 }
 
 func resolveTrustedRoot(raw string) (cid.Cid, string, error) {
-	store, _, storeErr := openTrustStore()
-	if storeErr != nil {
-		return cid.Undef, "", storeErr
-	}
-	roots, err := application.NewRoots(store)
+	roots, err := rootsForSelector(raw)
 	if err != nil {
 		return cid.Undef, "", err
 	}
@@ -46,6 +42,20 @@ func resolveTrustedRoot(raw string) (cid.Cid, string, error) {
 		return cid.Undef, "", err
 	}
 	return selected.Root, selected.Alias, nil
+}
+
+// rootsForSelector keeps explicit CIDs independent from the optional alias
+// store. Only a non-CID selector can trigger trust-store I/O.
+func rootsForSelector(raw string) (*application.Roots, error) {
+	explicit := application.NewExplicitRootSelector()
+	if _, err := explicit.Select(raw); err == nil {
+		return explicit, nil
+	}
+	store, _, err := openTrustStore()
+	if err != nil {
+		return nil, err
+	}
+	return application.NewRoots(store)
 }
 
 func printJSON(value any) {

@@ -58,16 +58,12 @@ func runStat(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	store, _, err := openTrustStore()
-	if err != nil {
-		return err
-	}
 	path := optionalPath(args)
 	reader, err := newUnixFSReader(remote)
 	if err != nil {
 		return err
 	}
-	roots, err := application.NewRoots(store)
+	roots, err := rootsForSelector(args[0])
 	if err != nil {
 		return err
 	}
@@ -93,15 +89,11 @@ func runCat(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	store, _, err := openTrustStore()
-	if err != nil {
-		return err
-	}
 	reader, err := newUnixFSReader(remote)
 	if err != nil {
 		return err
 	}
-	roots, err := application.NewRoots(store)
+	roots, err := rootsForSelector(args[0])
 	if err != nil {
 		return err
 	}
@@ -129,15 +121,11 @@ func runRemove(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	store, _, err := openTrustStore()
-	if err != nil {
-		return err
-	}
 	writer, err := newUnixFSWriter(remote)
 	if err != nil {
 		return err
 	}
-	roots, err := application.NewRoots(store)
+	roots, err := rootsForSelector(args[0])
 	if err != nil {
 		return err
 	}

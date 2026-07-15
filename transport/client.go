@@ -279,16 +279,6 @@ func (c *Client) CreateStagedRoot(ctx context.Context, arcs map[string]string) (
 	return root, nil
 }
 
-// CreatePayloadRoot creates a minimal map root with an empty payload binding.
-func (c *Client) CreatePayloadRoot(ctx context.Context, extras map[string]string) (*CreateStructureResponse, error) {
-	arcs := make(map[string]string, len(extras)+1)
-	for key, value := range extras {
-		arcs[key] = value
-	}
-	arcs["@payload"] = "bafkqaaa"
-	return c.CreateRootStructure(ctx, arcs)
-}
-
 func (c *Client) endpoint(route string) (*url.URL, error) {
 	if c == nil || c.http == nil {
 		return nil, fmt.Errorf("gateway client is nil")

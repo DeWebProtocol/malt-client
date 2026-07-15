@@ -4,6 +4,7 @@ import (
 	"go/parser"
 	"go/token"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -27,6 +28,32 @@ func TestPackageBoundaries(t *testing.T) {
 		t.Run(test.path, func(t *testing.T) {
 			checkImports(t, filepath.Join(root, test.path), test.banned)
 		})
+	}
+}
+
+func TestGenericTransportContainsNoUnixFSPayloadBinding(t *testing.T) {
+	root := filepath.Join(moduleRoot(t), "transport")
+	forbidden := []string{"CreatePayloadRoot", "@payload", "bafkqaaa"}
+	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() || filepath.Ext(path) != ".go" || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		for _, token := range forbidden {
+			if strings.Contains(string(data), token) {
+				t.Errorf("%s contains UnixFS payload-binding token %q", path, token)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }
 

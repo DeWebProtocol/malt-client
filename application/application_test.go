@@ -106,6 +106,22 @@ func TestUnixFSUseCaseSelectsAcceptedRootAndRecordsCandidateWithoutAcceptance(t 
 	}
 }
 
+func TestExplicitRootSelectorRequiresNoTrustPolicy(t *testing.T) {
+	root := testCID(t, "explicit-root")
+	selector := application.NewExplicitRootSelector()
+
+	selected, err := selector.Select(root.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !selected.Root.Equals(root) || selected.Alias != "" {
+		t.Fatalf("selection = %#v, want explicit root without alias", selected)
+	}
+	if _, err := selector.Select("docs"); err == nil {
+		t.Fatal("explicit root selector resolved an alias without a trust policy")
+	}
+}
+
 func TestUnixFSUseCaseRejectsWriterClaimingAutomaticAcceptance(t *testing.T) {
 	accepted := testCID(t, "accepted")
 	candidate := testCID(t, "candidate")
