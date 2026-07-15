@@ -22,10 +22,12 @@ This is an experimental, pre-v1 client. It currently provides the `malt` CLI,
 a local trusted-root daemon, and a UnixFS application adapter. There is no
 independent `malt-client` release tag yet; build from a pinned commit.
 
-The current development baseline pins MALT core commit `fc8cd2d1f071` from
-[core PR #169](https://github.com/DeWebProtocol/malt/pull/169) through Go
-pseudo-version `v0.0.7-0.20260715095704-fc8cd2d1f071`. This is an exact
-integration dependency, not a claim that MALT core v0.0.7 has been released.
+The client boundary refactor is merged on `main` at `2ac844cfeeb5`. MALT core
+[PR #169](https://github.com/DeWebProtocol/malt/pull/169) is likewise merged at
+`68550e046804`. Until the next formal core release, this module still pins the
+development pseudo-version `v0.0.7-0.20260715095704-fc8cd2d1f071`; the
+cross-repository gate tests the merged core revision through an exact `go.work`
+overlay. Neither reference claims that MALT core v0.0.7 has been released.
 
 ## Build
 
