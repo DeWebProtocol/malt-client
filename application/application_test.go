@@ -17,6 +17,9 @@ import (
 
 type fakeUnixFS struct {
 	readRoot     cid.Cid
+	removeRoot   cid.Cid
+	rangeOffset  uint64
+	rangeLength  uint64
 	removeResult *unixfs.RemoveResult
 	writeResult  *unixfs.WriteResult
 }
@@ -32,8 +35,10 @@ func (f *fakeUnixFS) ReadFile(_ context.Context, root cid.Cid, _ string) (*unixf
 	f.readRoot = root
 	return &unixfs.ReadResult{Body: []byte("verified"), Target: root}, nil
 }
-func (f *fakeUnixFS) ReadFileRange(_ context.Context, root cid.Cid, _ string, _, _ uint64) (*unixfs.ReadResult, error) {
+func (f *fakeUnixFS) ReadFileRange(_ context.Context, root cid.Cid, _ string, offset, length uint64) (*unixfs.ReadResult, error) {
 	f.readRoot = root
+	f.rangeOffset = offset
+	f.rangeLength = length
 	return &unixfs.ReadResult{Body: []byte("range"), Target: root}, nil
 }
 func (*fakeUnixFS) ReadListPayloadRange(context.Context, cid.Cid, uint64, uint64) (*unixfs.ReadResult, error) {
@@ -54,7 +59,8 @@ func (f *fakeUnixFS) AddFileStream(context.Context, cid.Cid, string, io.Reader) 
 func (f *fakeUnixFS) AddFileSized(context.Context, cid.Cid, string, io.Reader, int64) (*unixfs.WriteResult, error) {
 	return f.writeResult, nil
 }
-func (f *fakeUnixFS) RemovePath(context.Context, cid.Cid, string) (*unixfs.RemoveResult, error) {
+func (f *fakeUnixFS) RemovePath(_ context.Context, root cid.Cid, _ string) (*unixfs.RemoveResult, error) {
+	f.removeRoot = root
 	return f.removeResult, nil
 }
 
@@ -80,15 +86,33 @@ func TestUnixFSUseCaseSelectsAcceptedRootAndRecordsCandidateWithoutAcceptance(t 
 	if err != nil {
 		t.Fatal(err)
 	}
+	stat, err := app.Stat(t.Context(), "docs", "file.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !stat.NodeRoot.Equals(accepted) || !facade.readRoot.Equals(accepted) {
+		t.Fatalf("stat used root %s and returned %s, want accepted root %s", facade.readRoot, stat.NodeRoot, accepted)
+	}
 	read, err := app.ReadFile(t.Context(), "docs", "file.txt")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(read.Body, []byte("verified")) || !facade.readRoot.Equals(accepted) {
-		t.Fatalf("read used root %s, want accepted root %s", facade.readRoot, accepted)
+	if !bytes.Equal(read.Body, []byte("verified")) || !read.Target.Equals(accepted) || !facade.readRoot.Equals(accepted) {
+		t.Fatalf("full read used root %s and returned target %s, want accepted root %s", facade.readRoot, read.Target, accepted)
 	}
-	if _, err := app.RemovePath(t.Context(), "docs", "file.txt"); err != nil {
+	ranged, err := app.ReadFileRange(t.Context(), "docs", "file.txt", 2, 3)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if !bytes.Equal(ranged.Body, []byte("range")) || !ranged.Target.Equals(accepted) || !facade.readRoot.Equals(accepted) || facade.rangeOffset != 2 || facade.rangeLength != 3 {
+		t.Fatalf("range read = body %q target %s root %s offset %d length %d", ranged.Body, ranged.Target, facade.readRoot, facade.rangeOffset, facade.rangeLength)
+	}
+	removed, err := app.RemovePath(t.Context(), "docs", "file.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !facade.removeRoot.Equals(accepted) || !removed.BaseRoot.Equals(accepted) || !removed.CandidateRoot.Equals(candidate) || removed.Accepted {
+		t.Fatalf("remove used root %s and returned %#v", facade.removeRoot, removed)
 	}
 	record, err := store.Get("docs")
 	if err != nil {
