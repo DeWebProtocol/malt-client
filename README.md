@@ -101,7 +101,9 @@ import (
 Package `application` is the reusable use-case layer used by the CLI and local
 daemon. It selects explicit or locally accepted roots, composes verified UnixFS
 and Merkle DAG reads, records writer results as candidates, and exposes
-candidate promotion only as an explicit call.
+candidate promotion only as an explicit call. Its `application/add` package
+owns the CLI-independent ignore, symlink, staging, hybrid materialization, and
+Merkle DAG import workflow used by `malt add`.
 
 Package `transport` is an untrusted gateway transport. Package `trust` owns
 accepted/candidate root policy. Package `unixfs`

@@ -1,11 +1,10 @@
-package main
+package add
 
 import (
 	"context"
 	"fmt"
 
 	malt "github.com/dewebprotocol/malt"
-	gatewayclient "github.com/dewebprotocol/malt-client/transport"
 	unixfs "github.com/dewebprotocol/malt-client/unixfs"
 	unixfsmodel "github.com/dewebprotocol/malt-client/unixfs/model"
 	"github.com/dewebprotocol/malt/protocol"
@@ -16,25 +15,9 @@ import (
 
 type addMaterializeResult = unixfs.StagedMaterializeResult
 
-type addStagedRootCreator struct {
-	gateway *gatewayclient.Client
-}
-
 type addStagedPathStatter struct {
-	gateway  *gatewayclient.Client
+	gateway  unixfs.Remote
 	verifier *clientverifier.Verifier
-}
-
-func (c addStagedRootCreator) CreateStagedRoot(ctx context.Context, bindings map[string]string) (cid.Cid, error) {
-	resp, err := c.gateway.CreateRootStructure(ctx, bindings)
-	if err != nil {
-		return cid.Undef, err
-	}
-	rootCID, err := cid.Decode(resp.Root)
-	if err != nil {
-		return cid.Undef, fmt.Errorf("decode created map root: %w", err)
-	}
-	return rootCID, nil
 }
 
 func (s addStagedPathStatter) StatStagedPath(ctx context.Context, root string, p string) (unixfs.StagedPathStat, error) {
@@ -88,7 +71,7 @@ func (s addStagedPathStatter) resolveAndVerify(ctx context.Context, root cid.Cid
 	return target, nil
 }
 
-func loadExistingCurrentTree(ctx context.Context, gateway *gatewayclient.Client, casClient addCASClient, rootCID string) (*unixfs.StagedNode, error) {
+func loadExistingCurrentTree(ctx context.Context, gateway unixfs.Remote, casClient addCASClient, rootCID string) (*unixfs.StagedNode, error) {
 	verifier, err := clientverifier.NewDefault()
 	if err != nil {
 		return nil, fmt.Errorf("initialize local verifier: %w", err)
@@ -97,8 +80,8 @@ func loadExistingCurrentTree(ctx context.Context, gateway *gatewayclient.Client,
 	return unixfs.LoadStagedCurrentTree(ctx, statter, casClient, rootCID)
 }
 
-func materializeDirectory(ctx context.Context, gateway *gatewayclient.Client, casClient addCASClient, node *unixfs.StagedNode) (*addMaterializeResult, error) {
-	return unixfs.MaterializeStagedDirectory(ctx, addStagedRootCreator{gateway: gateway}, asAddCASBatcher(casClient), node)
+func materializeDirectory(ctx context.Context, gateway unixfs.StagedRootCreator, casClient addCASClient, node *unixfs.StagedNode) (*addMaterializeResult, error) {
+	return unixfs.MaterializeStagedDirectory(ctx, gateway, asAddCASBatcher(casClient), node)
 }
 
 func addMaterializeStats(dst *addMaterializeResult, src *addMaterializeResult) {

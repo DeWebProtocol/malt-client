@@ -1,10 +1,9 @@
-package main
+package add
 
 import (
 	"context"
 	"fmt"
 
-	"github.com/dewebprotocol/malt-client/application"
 	merkledagimport "github.com/dewebprotocol/malt-client/merkledag/importer"
 )
 
@@ -19,11 +18,7 @@ func addInputsWithMerkleDAGUnixFS(ctx context.Context, casClient addCASClient, r
 	if err != nil {
 		return nil, err
 	}
-	app, err := application.NewMerkleDAG(nil, casClient)
-	if err != nil {
-		return nil, err
-	}
-	result, err := app.ImportPath(ctx, rawInputs[0], merkledagimport.Options{
+	result, err := merkledagimport.ImportPath(ctx, casClient, rawInputs[0], merkledagimport.Options{
 		Model:      opts.Model,
 		FileLayout: opts.FileLayout,
 		DirLayout:  opts.DirLayout,

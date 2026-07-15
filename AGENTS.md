@@ -29,9 +29,9 @@ compatibility, gateway transport, and payload-byte verification.
 - `trust/` is the only package that persists accepted/candidate roots or
   promotes a candidate. It must not depend on network or application packages.
 - `application/` owns reusable accepted-root selection, candidate recording,
-  explicit acceptance, UnixFS use cases, and Merkle DAG import/read
-  orchestration shared by CLI and daemon adapters. It depends on narrow ports,
-  not Cobra or arbitrary transport routes.
+  explicit acceptance, UnixFS use cases, bulk local-input staging, and Merkle
+  DAG import/read orchestration shared by CLI and daemon adapters. It depends
+  on narrow ports, not Cobra or arbitrary transport routes.
 - `unixfs/` owns the MALT-authenticated UnixFS facade, staging,
   materialization, and payload/range verification. Keep reusable UnixFS
   behavior here rather than under `cmd/malt`.

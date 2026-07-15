@@ -1,13 +1,11 @@
-package main
+package add
 
 import (
 	"context"
 	"fmt"
 	"strings"
 
-	gatewayclient "github.com/dewebprotocol/malt-client/transport"
 	"github.com/dewebprotocol/malt-client/unixfs"
-	cid "github.com/ipfs/go-cid"
 )
 
 type addUnixFSResult struct {
@@ -23,13 +21,9 @@ type addUnixFSResult struct {
 	SymlinkRoots     int
 }
 
-type addCASClient interface {
-	Put(ctx context.Context, data []byte) (cid.Cid, error)
-	PutWithCodec(ctx context.Context, data []byte, codec uint64) (cid.Cid, error)
-	Get(ctx context.Context, c cid.Cid) ([]byte, error)
-}
+type addCASClient = CAS
 
-func addInputsWithUnixFS(ctx context.Context, remote *gatewayclient.Client, casClient addCASClient, rawInputs []string, root string, opts addBuildOptions) (*addUnixFSResult, error) {
+func addInputsWithUnixFS(ctx context.Context, remote Gateway, casClient addCASClient, rawInputs []string, root string, opts addBuildOptions) (*addUnixFSResult, error) {
 	normalized, err := normalizeAddBuildOptions(opts)
 	if err != nil {
 		return nil, err
@@ -43,7 +37,7 @@ func addInputsWithUnixFS(ctx context.Context, remote *gatewayclient.Client, casC
 	return nil, fmt.Errorf("unsupported add target/model/layout %q/%q/%q", normalized.Target, normalized.Model, normalized.Layout)
 }
 
-func addInputsWithMALTHybridUnixFS(ctx context.Context, remote *gatewayclient.Client, casClient addCASClient, rawInputs []string, root string, opts addBuildOptions) (*addUnixFSResult, error) {
+func addInputsWithMALTHybridUnixFS(ctx context.Context, remote Gateway, casClient addCASClient, rawInputs []string, root string, opts addBuildOptions) (*addUnixFSResult, error) {
 	if remote == nil {
 		return nil, fmt.Errorf("gateway client is required")
 	}

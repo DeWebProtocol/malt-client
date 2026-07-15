@@ -131,6 +131,8 @@ the operation fails as stale instead of applying a sibling transition.
 - `cmd/malt`: CLI and daemon process lifecycle.
 - `application`: reusable trusted-root, UnixFS, and Merkle DAG use cases shared
   by command and daemon adapters.
+- `application/add`: reusable ignore-aware local-input staging, symlink policy,
+  hybrid MALT materialization, Merkle DAG import, and candidate recording.
 - `transport`: untrusted native MALT/CAS HTTP transport and narrow capability
   interfaces.
 - `trust`: accepted and candidate root policy plus durable local persistence.

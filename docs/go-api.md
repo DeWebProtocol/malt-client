@@ -53,6 +53,12 @@ requires `Roots.AcceptCandidate`.
 operations and reusable IPFS-compatible `ImportPath`, without exposing HTTP
 routes or representing CID/link evidence as a ProofList.
 
+Bulk local-input import is reusable through `application/add`. `add.Run` owns
+option normalization, ignore and symlink policy, native hybrid staging,
+Merkle DAG import, accepted-alias selection, and unaccepted candidate
+recording. The caller injects a narrow graph/fixed-list Gateway and CAS; Cobra
+is not part of this package.
+
 ## Verified native UnixFS
 
 Construct a reader using narrow ports:
