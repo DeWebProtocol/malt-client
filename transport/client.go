@@ -368,17 +368,21 @@ func (c *Client) doRaw(ctx context.Context, method, route string, query map[stri
 	return c.execute(req, out)
 }
 
-// PostProfileJSON sends one profile-specific JSON request and returns a
-// size-bounded but otherwise untrusted response body. Application profile
-// packages use this narrow primitive when they require stricter decoding than
-// the generic MALT transport. The transport does not validate application
-// evidence or establish trust in the response.
-func (c *Client) PostProfileJSON(ctx context.Context, route string, request any) ([]byte, error) {
+// PostMerkleDAGResolve sends one request to the fixed Merkle-DAG resolve
+// compatibility route. The request and response remain untrusted profile JSON;
+// the merkledag application owns their strict codec and local replay.
+func (c *Client) PostMerkleDAGResolve(ctx context.Context, request []byte) ([]byte, error) {
+	return c.postProfileJSON(ctx, "/v1/compat/merkledag/resolve", request)
+}
+
+// PostMerkleDAGRead sends one request to the fixed Merkle-DAG read
+// compatibility route. It cannot be used to address arbitrary gateway routes.
+func (c *Client) PostMerkleDAGRead(ctx context.Context, request []byte) ([]byte, error) {
+	return c.postProfileJSON(ctx, "/v1/compat/merkledag/read", request)
+}
+
+func (c *Client) postProfileJSON(ctx context.Context, route string, body []byte) ([]byte, error) {
 	u, err := c.endpoint(route)
-	if err != nil {
-		return nil, err
-	}
-	body, err := json.Marshal(request)
 	if err != nil {
 		return nil, err
 	}

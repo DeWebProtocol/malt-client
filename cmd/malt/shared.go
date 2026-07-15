@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/dewebprotocol/malt-client/application"
 	clientconfig "github.com/dewebprotocol/malt-client/internal/config"
 	client "github.com/dewebprotocol/malt-client/transport"
 	cid "github.com/ipfs/go-cid"
@@ -32,23 +33,19 @@ func daemonCommandError(err error) error {
 }
 
 func resolveTrustedRoot(raw string) (cid.Cid, string, error) {
-	root, err := cid.Parse(raw)
-	if err == nil {
-		return root, "", nil
-	}
 	store, _, storeErr := openTrustStore()
 	if storeErr != nil {
 		return cid.Undef, "", storeErr
 	}
-	record, storeErr := store.Get(raw)
-	if storeErr != nil {
-		return cid.Undef, "", fmt.Errorf("%q is neither a CID nor a trusted-root alias: %w", raw, storeErr)
-	}
-	root, err = cid.Parse(record.AcceptedRoot)
+	roots, err := application.NewRoots(store)
 	if err != nil {
-		return cid.Undef, "", fmt.Errorf("trusted alias %q contains an invalid root: %w", raw, err)
+		return cid.Undef, "", err
 	}
-	return root, record.Alias, nil
+	selected, err := roots.Select(raw)
+	if err != nil {
+		return cid.Undef, "", err
+	}
+	return selected.Root, selected.Alias, nil
 }
 
 func printJSON(value any) {

@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/dewebprotocol/malt-client/application"
 	gatewayclient "github.com/dewebprotocol/malt-client/transport"
+	cid "github.com/ipfs/go-cid"
 	"github.com/spf13/cobra"
 )
 
@@ -96,6 +98,7 @@ func runAdd(cmd *cobra.Command, args []string) error {
 	}
 
 	var remote *gatewayclient.Client
+	var roots *application.Roots
 	workingRoot := strings.TrimSpace(addRootFlag)
 	var candidateStoreAlias string
 	if opts.Target == addTargetMerkleDAG && (workingRoot != "" || strings.TrimSpace(addAliasFlag) != "") {
@@ -109,12 +112,16 @@ func runAdd(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
-		record, err := store.Get(addAliasFlag)
+		roots, err = application.NewRoots(store)
 		if err != nil {
 			return err
 		}
-		workingRoot = record.AcceptedRoot
-		candidateStoreAlias = record.Alias
+		selected, err := roots.Select(addAliasFlag)
+		if err != nil {
+			return err
+		}
+		workingRoot = selected.Root.String()
+		candidateStoreAlias = selected.Alias
 	}
 	if opts.Target == addTargetMALT {
 		remote, err = gatewayClient()
@@ -135,11 +142,15 @@ func runAdd(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to materialize a new root")
 	}
 	if candidateStoreAlias != "" {
-		store, _, err := openTrustStore()
+		candidate, err := cid.Parse(result.NewRoot)
 		if err != nil {
-			return err
+			return fmt.Errorf("decode add candidate root: %w", err)
 		}
-		if _, err := store.AddCandidate(candidateStoreAlias, result.NewRoot, workingRoot, "malt add"); err != nil {
+		base, err := cid.Parse(workingRoot)
+		if err != nil {
+			return fmt.Errorf("decode add base root: %w", err)
+		}
+		if _, err := roots.RecordCandidate(candidateStoreAlias, candidate, base, "malt add"); err != nil {
 			return fmt.Errorf("record candidate root: %w", err)
 		}
 	}

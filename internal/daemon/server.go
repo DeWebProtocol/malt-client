@@ -12,13 +12,15 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/dewebprotocol/malt-client/application"
 	truststore "github.com/dewebprotocol/malt-client/trust"
+	cid "github.com/ipfs/go-cid"
 )
 
 const lifecycleInstanceHeader = "X-Malt-Client-Instance"
 
 type Server struct {
-	store    *truststore.Store
+	roots    *application.Roots
 	mux      *http.ServeMux
 	instance string
 }
@@ -34,7 +36,11 @@ func NewWithInstance(store *truststore.Store, instance string) (*Server, error) 
 	if store == nil {
 		return nil, fmt.Errorf("trust store is nil")
 	}
-	s := &Server{store: store, mux: http.NewServeMux(), instance: instance}
+	roots, err := application.NewRoots(store)
+	if err != nil {
+		return nil, err
+	}
+	s := &Server{roots: roots, mux: http.NewServeMux(), instance: instance}
 	s.routes()
 	return s, nil
 }
@@ -54,7 +60,7 @@ func (s *Server) routes() {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 	s.mux.HandleFunc("GET /v1/roots", func(w http.ResponseWriter, _ *http.Request) {
-		roots, err := s.store.List()
+		roots, err := s.roots.List()
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
@@ -62,7 +68,7 @@ func (s *Server) routes() {
 		writeJSON(w, http.StatusOK, map[string]any{"roots": roots})
 	})
 	s.mux.HandleFunc("GET /v1/roots/{alias}", func(w http.ResponseWriter, r *http.Request) {
-		record, err := s.store.Get(r.PathValue("alias"))
+		record, err := s.roots.Get(r.PathValue("alias"))
 		if err != nil {
 			writeStoreError(w, err)
 			return
@@ -80,7 +86,7 @@ func (s *Server) routes() {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		record, err := s.store.Trust(r.PathValue("alias"), body.Root, body.Profile, body.Gateway, body.Source)
+		record, err := s.roots.Trust(r.PathValue("alias"), body.Root, body.Profile, body.Gateway, body.Source)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
@@ -97,7 +103,17 @@ func (s *Server) routes() {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		record, err := s.store.AddCandidate(r.PathValue("alias"), body.Root, body.BaseRoot, body.Source)
+		candidate, err := cid.Parse(body.Root)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("invalid candidate root: %v", err)})
+			return
+		}
+		base, err := cid.Parse(body.BaseRoot)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("invalid candidate base root: %v", err)})
+			return
+		}
+		record, err := s.roots.RecordCandidate(r.PathValue("alias"), candidate, base, body.Source)
 		if err != nil {
 			writeStoreError(w, err)
 			return
@@ -105,7 +121,12 @@ func (s *Server) routes() {
 		writeJSON(w, http.StatusCreated, record)
 	})
 	s.mux.HandleFunc("POST /v1/roots/{alias}/candidates/{root}/accept", func(w http.ResponseWriter, r *http.Request) {
-		record, err := s.store.AcceptCandidate(r.PathValue("alias"), r.PathValue("root"), "explicit-local-acceptance")
+		candidate, err := cid.Parse(r.PathValue("root"))
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("invalid candidate root: %v", err)})
+			return
+		}
+		record, err := s.roots.AcceptCandidate(r.PathValue("alias"), candidate, "explicit-local-acceptance")
 		if err != nil {
 			writeStoreError(w, err)
 			return

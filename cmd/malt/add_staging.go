@@ -456,7 +456,11 @@ func stageSingleFile(ctx context.Context, root *unixfs.StagedNode, casClient add
 	}
 	defer f.Close()
 
-	key, listBacked, err := unixfs.MaterializeStagedFilePayload(ctx, casClient, remote, f, info.Size(), addFixedChunkSize)
+	lists, err := unixfs.NewGatewayMutationAdapter(remote)
+	if err != nil {
+		return 0, 0, err
+	}
+	key, listBacked, err := unixfs.MaterializeStagedFilePayload(ctx, casClient, lists, f, info.Size(), addFixedChunkSize)
 	if err != nil {
 		return 0, 0, fmt.Errorf("materialize file payload for %s: %w", localPath, err)
 	}

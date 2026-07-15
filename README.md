@@ -90,12 +90,18 @@ The public Go API is importable as:
 
 ```go
 import (
+    "github.com/dewebprotocol/malt-client/application"
     "github.com/dewebprotocol/malt-client/merkledag"
     "github.com/dewebprotocol/malt-client/transport"
     "github.com/dewebprotocol/malt-client/trust"
     "github.com/dewebprotocol/malt-client/unixfs"
 )
 ```
+
+Package `application` is the reusable use-case layer used by the CLI and local
+daemon. It selects explicit or locally accepted roots, composes verified UnixFS
+and Merkle DAG reads, records writer results as candidates, and exposes
+candidate promotion only as an explicit call.
 
 Package `transport` is an untrusted gateway transport. Package `trust` owns
 accepted/candidate root policy. Package `unixfs`
@@ -106,10 +112,13 @@ a caller-selected root, verifies ProofLists locally, enforces resolve-to-read
 continuity, and verifies raw, manifest, and measured-list payload bytes.
 
 Package `merkledag` owns the gateway's distinct compatibility profiles over a
-narrow profile transport. `ResolveMerkleDAGVerified` and
+narrow fixed-route profile transport. `ResolveMerkleDAGVerified` and
 `ReadMerkleDAGVerified` recompute every
 evidence block CID and replay the UnixFS link traversal locally. These results
 are never represented as MALT ProofLists.
+
+The transport exposes only fixed Merkle DAG resolve/read route capabilities;
+applications cannot supply an arbitrary Gateway route and JSON body.
 
 The transport exposes bounded ordered CAS `PutBatch`/`HasBatch` and a
 typed diagnostic metrics snapshot. Package `merkledag/ipld` restores the

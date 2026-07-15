@@ -38,9 +38,17 @@ type Diagnostics interface {
 	MetricsWithStorage(context.Context) (*MetricsSnapshot, error)
 }
 
+// MerkleDAGProfile exposes only the two fixed compatibility routes. It does
+// not permit application packages to select arbitrary gateway paths.
+type MerkleDAGProfile interface {
+	PostMerkleDAGResolve(context.Context, []byte) ([]byte, error)
+	PostMerkleDAGRead(context.Context, []byte) ([]byte, error)
+}
+
 var (
-	_ Native      = (*Client)(nil)
-	_ Mutations   = (*Client)(nil)
-	_ CAS         = (*Client)(nil)
-	_ Diagnostics = (*Client)(nil)
+	_ Native           = (*Client)(nil)
+	_ Mutations        = (*Client)(nil)
+	_ CAS              = (*Client)(nil)
+	_ Diagnostics      = (*Client)(nil)
+	_ MerkleDAGProfile = (*Client)(nil)
 )

@@ -28,15 +28,19 @@ compatibility, gateway transport, and payload-byte verification.
   `unixfs`, or `merkledag`.
 - `trust/` is the only package that persists accepted/candidate roots or
   promotes a candidate. It must not depend on network or application packages.
+- `application/` owns reusable accepted-root selection, candidate recording,
+  explicit acceptance, UnixFS use cases, and Merkle DAG import/read
+  orchestration shared by CLI and daemon adapters. It depends on narrow ports,
+  not Cobra or arbitrary transport routes.
 - `unixfs/` owns the MALT-authenticated UnixFS facade, staging,
   materialization, and payload/range verification. Keep reusable UnixFS
   behavior here rather than under `cmd/malt`.
 - `merkledag/` owns the compatibility client and local CID/link-evidence
   replay; `merkledag/importer` owns import construction. Do not represent this
   evidence as a MALT ProofList.
-- `cmd/malt/` is the application composition root. Command handlers should
-  select capabilities and format results, not become a second UnixFS or trust
-  implementation.
+- `cmd/malt/` is the process/composition adapter. Command handlers should
+  select capabilities, call `application/` use cases, and format results, not
+  become a second UnixFS or trust implementation.
 - Preserve `internal/architecture` dependency tests when adding packages or
   moving responsibilities.
 

@@ -20,7 +20,8 @@ contents are trusted or returned.
 
 The transport exposes generic `Resolve` and `Read`, immutable CAS `Get`, `Put`,
 `Has`, bounded `PutBatch`/`HasBatch`, root creation, semantic mutation, typed
-diagnostic metrics, and diagnostic verifier calls.
+diagnostic metrics, diagnostic verifier calls, and two fixed Merkle DAG
+compatibility methods. It intentionally has no arbitrary profile-route method.
 Transport methods validate wire shape and CAS bytes, but generic resolve/read
 results remain untrusted until locally verified against caller inputs.
 
@@ -29,6 +30,28 @@ requests Gateway's O(live KV entries) logical scan and should be used only by
 controlled evaluation or operator tooling.
 
 No exported signature contains a type from `internal/`.
+
+## Reusable application use cases
+
+Package `application` is the composition layer shared by CLI and daemon
+adapters:
+
+```go
+roots, err := application.NewRoots(policy)
+files, err := application.NewUnixFS(reader, writer, roots)
+result, err := files.ReadFile(ctx, "accepted-alias", "docs/readme.md")
+candidate, err := files.RemovePath(ctx, "accepted-alias", "old.txt")
+```
+
+An explicit CID bypasses alias lookup; an alias resolves only its accepted
+root. `AddFile`, streaming add, directory add, and remove return independently
+checked candidates. When an alias was selected, the use case records the
+candidate against that exact accepted base, but never promotes it. Promotion
+requires `Roots.AcceptCandidate`.
+
+`application.MerkleDAG` similarly exposes fixed verified `Resolve`/`Read`
+operations and reusable IPFS-compatible `ImportPath`, without exposing HTTP
+routes or representing CID/link evidence as a ProofList.
 
 ## Verified native UnixFS
 
@@ -41,6 +64,24 @@ reader, err := unixfs.NewReader(unixfs.ReaderOptions{
 })
 result, err := reader.ReadFile(ctx, trustedRoot, "docs/readme.md")
 ```
+
+For writing through the managed Gateway, adapt generic mutation receipts inside
+the UnixFS application boundary:
+
+```go
+lists, err := unixfs.NewGatewayMutationAdapter(remote)
+writer, err := unixfs.NewWriter(unixfs.WriterOptions{
+    Remote: remote,
+    Blocks: remote,
+    Roots:  remote,
+    Lists:  lists,
+})
+```
+
+The public `unixfs.MutationTransport` returns
+`unixfs.CandidateRootReceipt`, not a Gateway HTTP response type. Fixed-list base
+creation and mutation-result decoding live in `GatewayMutationAdapter`, not in
+generic transport.
 
 The public operations are:
 
