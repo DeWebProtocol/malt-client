@@ -17,6 +17,8 @@ import (
 
 type fakeUnixFS struct {
 	readRoot     cid.Cid
+	resolveRoot  cid.Cid
+	resolvePath  string
 	removeRoot   cid.Cid
 	rangeOffset  uint64
 	rangeLength  uint64
@@ -24,8 +26,10 @@ type fakeUnixFS struct {
 	writeResult  *unixfs.WriteResult
 }
 
-func (f *fakeUnixFS) Resolve(context.Context, cid.Cid, string) (*unixfs.Resolution, error) {
-	return &unixfs.Resolution{}, nil
+func (f *fakeUnixFS) Resolve(_ context.Context, root cid.Cid, path string) (*unixfs.Resolution, error) {
+	f.resolveRoot = root
+	f.resolvePath = path
+	return &unixfs.Resolution{Target: root}, nil
 }
 func (f *fakeUnixFS) Stat(_ context.Context, root cid.Cid, _ string) (*unixfs.Stat, error) {
 	f.readRoot = root
@@ -85,6 +89,13 @@ func TestUnixFSUseCaseSelectsAcceptedRootAndRecordsCandidateWithoutAcceptance(t 
 	app, err := application.NewUnixFS(facade, facade, roots)
 	if err != nil {
 		t.Fatal(err)
+	}
+	resolved, err := app.Resolve(t.Context(), "docs", "dir/file.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !resolved.Target.Equals(accepted) || !facade.resolveRoot.Equals(accepted) || facade.resolvePath != "dir/file.txt" {
+		t.Fatalf("resolve used root %s path %q and returned %s, want root %s", facade.resolveRoot, facade.resolvePath, resolved.Target, accepted)
 	}
 	stat, err := app.Stat(t.Context(), "docs", "file.txt")
 	if err != nil {

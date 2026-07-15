@@ -9,7 +9,6 @@ import (
 	"github.com/dewebprotocol/malt-client/application"
 	clientconfig "github.com/dewebprotocol/malt-client/internal/config"
 	client "github.com/dewebprotocol/malt-client/transport"
-	cid "github.com/ipfs/go-cid"
 )
 
 func loadRuntimeConfig() (*clientconfig.Config, error) {
@@ -30,18 +29,6 @@ func daemonCommandError(err error) error {
 		return fmt.Errorf("gateway request failed: %w", err)
 	}
 	return err
-}
-
-func resolveTrustedRoot(raw string) (cid.Cid, string, error) {
-	roots, err := rootsForSelector(raw)
-	if err != nil {
-		return cid.Undef, "", err
-	}
-	selected, err := roots.Select(raw)
-	if err != nil {
-		return cid.Undef, "", err
-	}
-	return selected.Root, selected.Alias, nil
 }
 
 // rootsForSelector keeps explicit CIDs independent from the optional alias

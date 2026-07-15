@@ -133,7 +133,7 @@ func run(ctx context.Context, roots *application.Roots, gateway Gateway, cas CAS
 			if roots == nil {
 				return nil, fmt.Errorf("trusted-root application is required for an alias")
 			}
-			selected, err := roots.Select(alias)
+			selected, err := roots.LookupAlias(alias)
 			if err != nil {
 				return nil, err
 			}

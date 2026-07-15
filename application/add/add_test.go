@@ -132,6 +132,45 @@ func TestRunRecordsAliasResultAsCandidateWithoutAcceptance(t *testing.T) {
 	}
 }
 
+func TestRunTreatsCIDShapedAliasAsAliasAndRecordsCandidate(t *testing.T) {
+	alias := testCID(t, "cid-shaped-alias").String()
+	accepted := testCID(t, "accepted-for-cid-shaped-alias")
+	candidate := testCID(t, "candidate-for-cid-shaped-alias")
+	store, err := trust.Open(filepath.Join(t.TempDir(), "roots.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Trust(alias, accepted.String(), "unixfs", "", "test"); err != nil {
+		t.Fatal(err)
+	}
+	roots, err := application.NewRoots(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	materialize := func(_ context.Context, _ Gateway, _ addCASClient, _ []string, root string, _ addBuildOptions) (*addUnixFSResult, error) {
+		if root != accepted.String() {
+			t.Fatalf("materializer root = %s, want alias's accepted root %s", root, accepted)
+		}
+		return &addUnixFSResult{NewRoot: candidate.String(), Files: 1}, nil
+	}
+	execution, err := run(t.Context(), roots, nil, casmemory.New(), Request{
+		Inputs: []string{"unused"}, Alias: alias, Options: Options{Target: TargetMALT},
+	}, materialize)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if execution.BaseRoot != accepted.String() || execution.Alias != alias {
+		t.Fatalf("execution = %#v, want accepted alias selection", execution)
+	}
+	record, err := store.Get(alias)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.AcceptedRoot != accepted.String() || len(record.Candidates) != 1 || record.Candidates[0].Root != candidate.String() || record.Candidates[0].BaseRoot != accepted.String() {
+		t.Fatalf("CID-shaped alias candidate recording = %#v", record)
+	}
+}
+
 func writeTestFile(t *testing.T, name, body string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(name), 0o755); err != nil {

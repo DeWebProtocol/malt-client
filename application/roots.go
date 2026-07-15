@@ -54,9 +54,27 @@ func (r *Roots) Select(raw string) (RootSelection, error) {
 	if r.policy == nil {
 		return RootSelection{}, fmt.Errorf("%q is not an explicit CID", raw)
 	}
-	root, record, err := trust.AcceptedRoot(r.policy, raw)
+	selected, err := r.LookupAlias(raw)
 	if err != nil {
 		return RootSelection{}, fmt.Errorf("%q is neither a CID nor a trusted-root alias: %w", raw, err)
+	}
+	return selected, nil
+}
+
+// LookupAlias resolves only a locally accepted alias. Unlike Select, it never
+// interprets a CID-shaped string as an explicit root. Callers must use this
+// entry point when the input is explicitly typed as an alias, such as --alias.
+func (r *Roots) LookupAlias(alias string) (RootSelection, error) {
+	if r == nil || r.policy == nil {
+		return RootSelection{}, fmt.Errorf("trusted-root application is nil")
+	}
+	alias = strings.TrimSpace(alias)
+	if alias == "" {
+		return RootSelection{}, fmt.Errorf("trusted-root alias is empty")
+	}
+	root, record, err := trust.AcceptedRoot(r.policy, alias)
+	if err != nil {
+		return RootSelection{}, fmt.Errorf("lookup trusted-root alias %q: %w", alias, err)
 	}
 	return RootSelection{Root: root, Alias: record.Alias}, nil
 }

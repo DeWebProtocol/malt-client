@@ -26,6 +26,16 @@ func NewUnixFS(reader unixfs.Reader, writer unixfs.Writer, roots *Roots) (*UnixF
 	return &UnixFS{reader: reader, writer: writer, roots: roots}, nil
 }
 
+// Resolve selects the caller's explicit or locally accepted root, projects
+// the UnixFS path, and returns only locally verified resolution evidence.
+func (a *UnixFS) Resolve(ctx context.Context, selector, path string) (*unixfs.Resolution, error) {
+	selected, err := a.roots.Select(selector)
+	if err != nil {
+		return nil, err
+	}
+	return a.reader.Resolve(ctx, selected.Root, path)
+}
+
 func (a *UnixFS) Stat(ctx context.Context, selector, path string) (*unixfs.Stat, error) {
 	selected, err := a.roots.Select(selector)
 	if err != nil {

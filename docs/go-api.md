@@ -43,11 +43,14 @@ result, err := files.ReadFile(ctx, "accepted-alias", "docs/readme.md")
 candidate, err := files.RemovePath(ctx, "accepted-alias", "old.txt")
 ```
 
-An explicit CID bypasses alias lookup; an alias resolves only its accepted
-root. `AddFile`, streaming add, directory add, and remove return independently
-checked candidates. When an alias was selected, the use case records the
-candidate against that exact accepted base, but never promotes it. Promotion
-requires `Roots.AcceptCandidate`.
+`Roots.Select` treats a CID-shaped positional selector as an explicit CID.
+Callers with an explicitly typed alias input must use `Roots.LookupAlias`,
+which always consults accepted-root policy even when the alias itself is valid
+CID text. `application/add` uses that strict path for `Request.Alias` and the
+CLI's `--alias` flag. `AddFile`, streaming add, directory add, and remove
+return independently checked candidates. When an alias was selected, the use
+case records the candidate against that exact accepted base, but never
+promotes it. Promotion requires `Roots.AcceptCandidate`.
 
 `application.MerkleDAG` similarly exposes fixed verified `Resolve`/`Read`
 operations and reusable IPFS-compatible `ImportPath`, without exposing HTTP

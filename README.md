@@ -22,9 +22,9 @@ This is an experimental, pre-v1 client. It currently provides the `malt` CLI,
 a local trusted-root daemon, and a UnixFS application adapter. There is no
 independent `malt-client` release tag yet; build from a pinned commit.
 
-The current development baseline pins MALT core commit `97838dc7ab61` from
+The current development baseline pins MALT core commit `fc8cd2d1f071` from
 [core PR #169](https://github.com/DeWebProtocol/malt/pull/169) through Go
-pseudo-version `v0.0.7-0.20260715072445-97838dc7ab61`. This is an exact
+pseudo-version `v0.0.7-0.20260715095704-fc8cd2d1f071`. This is an exact
 integration dependency, not a claim that MALT core v0.0.7 has been released.
 
 ## Build
@@ -113,6 +113,8 @@ Merkle DAG import workflow used by `malt add`.
 Explicit CIDs are selected without opening `roots.json`; the trust store is
 required only for an alias. A missing, corrupt, or unwritable alias store
 therefore cannot block an otherwise valid explicit-CID operation.
+Explicitly typed alias inputs such as `malt add --alias` always perform alias
+lookup, even when the alias text happens to be CID-shaped.
 
 Package `transport` is an untrusted gateway transport. Package `trust` owns
 accepted/candidate root policy. Package `unixfs`
