@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	gatewayclient "github.com/dewebprotocol/malt-client/client"
+	gatewayclient "github.com/dewebprotocol/malt-client/transport"
 	"github.com/spf13/cobra"
 )
 

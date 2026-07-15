@@ -6,11 +6,11 @@ core repository.
 
 ## Public gateway transport
 
-Import `github.com/dewebprotocol/malt-client/client` and construct a validated
+Import `github.com/dewebprotocol/malt-client/transport` and construct a validated
 transport:
 
 ```go
-remote, err := client.New(client.Options{BaseURL: "https://gateway.example"})
+remote, err := transport.New(transport.Options{BaseURL: "https://gateway.example"})
 ```
 
 `Options` also exposes independent JSON, blob, and error-response byte limits.
@@ -69,6 +69,14 @@ writer's configured temporary directory, then uses the same sized path. Both
 return an independently checked candidate root with `accepted: false`; they do
 not update trusted-root policy.
 
+## Trusted-root policy
+
+Package `trust` owns durable accepted/candidate state. `AcceptedRoot` never
+falls back to response data or to a candidate. Mutation and UnixFS writer
+results remain candidates until `AcceptCandidate` is called explicitly.
+
+Transport does not import or mutate this package.
+
 ## Merkle DAG compatibility
 
 The public transport also supports:
@@ -85,7 +93,14 @@ an array containing one empty-string coordinate. The profile applies only
 segment-count and per-segment byte limits; textual separator policy belongs to
 the calling application.
 
-Use `ResolveMerkleDAGVerified` or `ReadMerkleDAGVerified` for the safe default.
+Construct `merkledag.Client` over the shared transport and use
+`ResolveMerkleDAGVerified` or `ReadMerkleDAGVerified` for the safe default:
+
+```go
+compatibility, err := merkledag.New(remote)
+result, err := compatibility.ResolveMerkleDAGVerified(ctx, root, segments)
+```
+
 The corresponding `VerifyMerkleDAGResolve` and `VerifyMerkleDAGRead` helpers:
 
 1. bind traversal to the caller-selected root and segment array;

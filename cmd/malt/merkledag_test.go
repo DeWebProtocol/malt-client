@@ -8,9 +8,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	client "github.com/dewebprotocol/malt-client/client"
 	"github.com/dewebprotocol/malt-client/internal/cas"
 	clientconfig "github.com/dewebprotocol/malt-client/internal/config"
+	"github.com/dewebprotocol/malt-client/merkledag"
 	cid "github.com/ipfs/go-cid"
 )
 
@@ -20,27 +20,27 @@ func TestMerkleDAGCommandsUseExplicitRootAndWriteVerifiedOutput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	evidence := []client.MerkleDAGBlock{{CID: root.String(), Codec: cid.Raw, Data: payload}}
+	evidence := []merkledag.MerkleDAGBlock{{CID: root.String(), Codec: cid.Raw, Data: payload}}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/compat/merkledag/resolve":
-			var request client.MerkleDAGResolveRequest
+			var request merkledag.MerkleDAGResolveRequest
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatal(err)
 			}
 			if request.Root != root.String() || request.Segments == nil || len(request.Segments) != 0 {
 				t.Fatalf("resolve request = %#v", request)
 			}
-			_ = json.NewEncoder(w).Encode(client.MerkleDAGResolveResponse{Profile: client.MerkleDAGResolveProfile, Target: root.String(), Kind: "file", Blocks: evidence})
+			_ = json.NewEncoder(w).Encode(merkledag.MerkleDAGResolveResponse{Profile: merkledag.MerkleDAGResolveProfile, Target: root.String(), Kind: "file", Blocks: evidence})
 		case "/v1/compat/merkledag/read":
-			var request client.MerkleDAGReadRequest
+			var request merkledag.MerkleDAGReadRequest
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatal(err)
 			}
 			if request.Root != root.String() || request.Segments == nil || len(request.Segments) != 0 {
 				t.Fatalf("read request = %#v", request)
 			}
-			_ = json.NewEncoder(w).Encode(client.MerkleDAGReadResponse{Profile: client.MerkleDAGReadProfile, Target: root.String(), Kind: "file", TotalSize: uint64(len(payload)), Length: uint64(len(payload)), Data: payload, Blocks: evidence})
+			_ = json.NewEncoder(w).Encode(merkledag.MerkleDAGReadResponse{Profile: merkledag.MerkleDAGReadProfile, Target: root.String(), Kind: "file", TotalSize: uint64(len(payload)), Length: uint64(len(payload)), Data: payload, Blocks: evidence})
 		default:
 			http.NotFound(w, r)
 		}
@@ -65,7 +65,7 @@ func TestMerkleDAGCommandsUseExplicitRootAndWriteVerifiedOutput(t *testing.T) {
 	if err := runMerkleDAGResolve(merkleDAGResolveCmd, []string{root.String()}); err != nil {
 		t.Fatal(err)
 	}
-	var resolved client.MerkleDAGResolveResponse
+	var resolved merkledag.MerkleDAGResolveResponse
 	if err := json.Unmarshal(resolveOut.Bytes(), &resolved); err != nil {
 		t.Fatalf("resolve JSON: %v", err)
 	}

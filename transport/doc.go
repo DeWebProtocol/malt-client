@@ -3,5 +3,6 @@
 //
 // Transport success is never a trust decision. Callers must verify Resolve and
 // Read results locally against caller-selected roots. Higher-level application
-// packages such as unixfs/sdk perform that verification and bind payload bytes.
-package client
+// application packages such as unixfs perform that verification and bind
+// payload bytes.
+package transport

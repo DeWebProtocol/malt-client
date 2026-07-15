@@ -70,9 +70,29 @@ component, so values such as `.`, `..`, `a/b`, the empty string, and U+0000 are
 looked up exactly. Only the CLI's optional UnixFS string path applies `/`
 splitting and portable path restrictions.
 
+## Application, transport, and trust policy
+
+The dependency direction is deliberate:
+
+```text
+cmd/malt -> unixfs or merkledag application
+         -> trust policy
+         -> transport
+unixfs   -> MALT core verifier + narrow transport ports
+merkledag -> CID/link replay + narrow profile transport
+transport -> HTTP only; never imports unixfs, merkledag, or trust
+```
+
+`transport.Client` is one reusable HTTP connection, but consumers depend on
+the narrow `Native`, `Mutations`, `CAS`, or `Diagnostics` interfaces rather
+than a single mega-interface. Transport results remain untrusted. The
+application layer supplies the caller-selected root, performs local proof or
+CID/link replay, and binds payload bytes. The `trust` package alone persists
+accepted roots and promotes candidates through an explicit action.
+
 ## Verified UnixFS facade
 
-`unixfs/sdk` owns the transport-neutral native reader/writer facade. Its remote
+`unixfs` owns the transport-neutral native reader/writer facade. Its remote
 port contains only generic MALT resolve/read operations; CAS and root creation
 are separate narrow capabilities. The facade:
 
@@ -106,18 +126,22 @@ the operation fails as stale instead of applying a sibling transition.
 ## Packages
 
 - `cmd/malt`: CLI and daemon process lifecycle.
-- `client`: stable public gateway transport, wire DTOs, and local Merkle DAG
-  replay helpers.
+- `transport`: untrusted native MALT/CAS HTTP transport and narrow capability
+  interfaces.
+- `trust`: accepted and candidate root policy plus durable local persistence.
+- `merkledag`: isolated compatibility profile client and local CID/link replay.
+- `merkledag/importer`: IPFS-compatible UnixFS DAG construction.
 - `merkledag/ipld`: generic CID-validating IPLD parsing and link traversal for
   Merkle-DAG compatibility applications.
-- `internal/truststore`: accepted and candidate root persistence.
 - `internal/daemon`: local Unix-socket/Windows-pipe root-control API.
 - `internal/cas`: client-side CAS helpers and byte verification.
-- `internal/merkledagimport`: IPFS-compatible UnixFS DAG construction.
 - `unixfs/model`: UnixFS application values and path rules.
-- `unixfs/sdk`: verified UnixFS reader/writer facade, staging, materialization,
+- `unixfs`: verified UnixFS reader/writer facade, staging, materialization,
   and payload verification.
 
-The `internal` packages are not compatibility promises. The public `client`
-and `unixfs` packages are the intended pre-release integration surface; their
-profiles remain experimental until a release policy is published.
+The `internal` packages are not compatibility promises. The public
+`transport`, `trust`, `unixfs`, and `merkledag` packages are the intended
+pre-release integration surface; their profiles remain experimental until a
+release policy is published. Architecture tests fail if transport begins to
+import application or trust packages, or if Merkle DAG compatibility begins to
+depend on MALT ProofList contracts.

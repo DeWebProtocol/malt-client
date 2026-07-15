@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	clientconfig "github.com/dewebprotocol/malt-client/internal/config"
-	"github.com/dewebprotocol/malt-client/internal/truststore"
+	truststore "github.com/dewebprotocol/malt-client/trust"
 	"github.com/spf13/cobra"
 )
 

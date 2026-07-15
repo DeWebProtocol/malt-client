@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/dewebprotocol/malt-client/internal/merkledagimport"
+	merkledagimport "github.com/dewebprotocol/malt-client/merkledag/importer"
 )
 
 func addInputsWithMerkleDAGUnixFS(ctx context.Context, casClient addCASClient, rawInputs []string, opts addBuildOptions) (*addUnixFSResult, error) {

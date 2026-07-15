@@ -1,4 +1,4 @@
-package client
+package transport
 
 import (
 	"bytes"
@@ -366,6 +366,36 @@ func (c *Client) doRaw(ctx context.Context, method, route string, query map[stri
 		req.Header.Set("Content-Type", contentType)
 	}
 	return c.execute(req, out)
+}
+
+// PostProfileJSON sends one profile-specific JSON request and returns a
+// size-bounded but otherwise untrusted response body. Application profile
+// packages use this narrow primitive when they require stricter decoding than
+// the generic MALT transport. The transport does not validate application
+// evidence or establish trust in the response.
+func (c *Client) PostProfileJSON(ctx context.Context, route string, request any) ([]byte, error) {
+	u, err := c.endpoint(route)
+	if err != nil {
+		return nil, err
+	}
+	body, err := json.Marshal(request)
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u.String(), bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, c.responseError(resp)
+	}
+	return readBounded(resp.Body, c.maxJSONResponseBytes, "gateway profile JSON response")
 }
 
 func (c *Client) execute(req *http.Request, out any) error {

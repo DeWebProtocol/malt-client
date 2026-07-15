@@ -17,7 +17,7 @@ import (
 
 	clientconfig "github.com/dewebprotocol/malt-client/internal/config"
 	clientdaemon "github.com/dewebprotocol/malt-client/internal/daemon"
-	"github.com/dewebprotocol/malt-client/internal/truststore"
+	truststore "github.com/dewebprotocol/malt-client/trust"
 	"github.com/spf13/cobra"
 )
 

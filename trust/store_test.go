@@ -1,4 +1,4 @@
-package truststore
+package trust
 
 import (
 	"errors"
