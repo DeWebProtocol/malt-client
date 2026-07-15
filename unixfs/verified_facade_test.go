@@ -86,7 +86,7 @@ func (r *realRemote) CreateStagedRoot(ctx context.Context, bindings map[string]s
 	if err != nil {
 		return cid.Undef, err
 	}
-	return r.graph.Writer().CreateStructure(ctx, r.scope, set)
+	return r.graph.StructureCreator().CreateStructure(ctx, r.scope, set)
 }
 
 func (r *realRemote) CreateFixedListBaseRoot(ctx context.Context) (cid.Cid, error) {

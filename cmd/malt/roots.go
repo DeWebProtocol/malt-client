@@ -3,8 +3,10 @@ package main
 import (
 	"fmt"
 
+	"github.com/dewebprotocol/malt-client/application"
 	clientconfig "github.com/dewebprotocol/malt-client/internal/config"
 	truststore "github.com/dewebprotocol/malt-client/trust"
+	cid "github.com/ipfs/go-cid"
 	"github.com/spf13/cobra"
 )
 
@@ -20,7 +22,11 @@ var rootTrustCmd = &cobra.Command{
 			return err
 		}
 		profile, _ := cmd.Flags().GetString("profile")
-		record, err := store.Trust(args[0], args[1], profile, cfg.GatewayBaseURL(), "explicit-cli")
+		roots, err := application.NewRoots(store)
+		if err != nil {
+			return err
+		}
+		record, err := roots.Trust(args[0], args[1], profile, cfg.GatewayBaseURL(), "explicit-cli")
 		if err != nil {
 			return err
 		}
@@ -38,7 +44,11 @@ var rootListCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		roots, err := store.List()
+		app, err := application.NewRoots(store)
+		if err != nil {
+			return err
+		}
+		roots, err := app.List()
 		if err != nil {
 			return err
 		}
@@ -56,7 +66,15 @@ var rootAcceptCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		record, err := store.AcceptCandidate(args[0], args[1], "explicit-cli")
+		roots, err := application.NewRoots(store)
+		if err != nil {
+			return err
+		}
+		candidate, err := cid.Parse(args[1])
+		if err != nil {
+			return fmt.Errorf("invalid candidate root: %w", err)
+		}
+		record, err := roots.AcceptCandidate(args[0], candidate, "explicit-cli")
 		if err != nil {
 			return err
 		}

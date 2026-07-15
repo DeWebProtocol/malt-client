@@ -75,20 +75,31 @@ splitting and portable path restrictions.
 The dependency direction is deliberate:
 
 ```text
-cmd/malt -> unixfs or merkledag application
-         -> trust policy
-         -> transport
-unixfs   -> MALT core verifier + narrow transport ports
-merkledag -> CID/link replay + narrow profile transport
-transport -> HTTP only; never imports unixfs, merkledag, or trust
+cmd/malt and internal/daemon -> application use cases
+application -> unixfs / merkledag / trust narrow ports
+unixfs     -> MALT core verifier + narrow transport ports
+merkledag  -> CID/link replay + fixed profile transport
+trust      -> accepted/candidate root persistence
+transport  -> HTTP only; never imports unixfs, merkledag, or trust
 ```
 
 `transport.Client` is one reusable HTTP connection, but consumers depend on
 the narrow `Native`, `Mutations`, `CAS`, or `Diagnostics` interfaces rather
-than a single mega-interface. Transport results remain untrusted. The
-application layer supplies the caller-selected root, performs local proof or
-CID/link replay, and binds payload bytes. The `trust` package alone persists
-accepted roots and promotes candidates through an explicit action.
+than a single mega-interface. Merkle DAG compatibility is exposed only through
+the fixed `PostMerkleDAGResolve` and `PostMerkleDAGRead` capabilities; there is
+no arbitrary profile-route escape hatch. Transport results remain untrusted.
+The `application` layer supplies the caller-selected root, composes verified
+UnixFS or Merkle DAG reads, records mutation results as candidates, and exposes
+explicit candidate acceptance for both CLI and daemon adapters. The `trust`
+package alone persists accepted roots and performs promotion.
+
+An explicit CID is parsed before any accepted-root alias lookup. Consequently,
+explicit-CID resolve/read/write operations do not require the alias store to
+exist or be readable; only alias selection opens that local state. Generic
+transport exposes canonical root-structure creation, while the UnixFS gateway
+adapter owns the `@payload` empty-root binding needed by fixed-list
+materialization. The same adapter binds mutation receipts to the gateway's
+returned base root and rejects a response for any other requested root.
 
 ## Verified UnixFS facade
 
@@ -126,6 +137,10 @@ the operation fails as stale instead of applying a sibling transition.
 ## Packages
 
 - `cmd/malt`: CLI and daemon process lifecycle.
+- `application`: reusable trusted-root, UnixFS, and Merkle DAG use cases shared
+  by command and daemon adapters.
+- `application/add`: reusable ignore-aware local-input staging, symlink policy,
+  hybrid MALT materialization, Merkle DAG import, and candidate recording.
 - `transport`: untrusted native MALT/CAS HTTP transport and narrow capability
   interfaces.
 - `trust`: accepted and candidate root policy plus durable local persistence.
@@ -140,8 +155,8 @@ the operation fails as stale instead of applying a sibling transition.
   and payload verification.
 
 The `internal` packages are not compatibility promises. The public
-`transport`, `trust`, `unixfs`, and `merkledag` packages are the intended
-pre-release integration surface; their profiles remain experimental until a
-release policy is published. Architecture tests fail if transport begins to
-import application or trust packages, or if Merkle DAG compatibility begins to
-depend on MALT ProofList contracts.
+`application`, `transport`, `trust`, `unixfs`, and `merkledag` packages are the
+intended pre-release integration surface; their profiles remain experimental
+until a release policy is published. Architecture tests fail if transport
+begins to import application or trust packages, or if Merkle DAG compatibility
+begins to depend on transport implementation types or MALT ProofList contracts.

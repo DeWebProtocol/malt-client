@@ -1,12 +1,7 @@
 package main
 
 import (
-	"fmt"
-
-	malt "github.com/dewebprotocol/malt"
-	unixfsmodel "github.com/dewebprotocol/malt-client/unixfs/model"
-	"github.com/dewebprotocol/malt/protocol"
-	clientverifier "github.com/dewebprotocol/malt/sdk/verifier"
+	"github.com/dewebprotocol/malt-client/application"
 	"github.com/spf13/cobra"
 )
 
@@ -31,34 +26,22 @@ func runResolve(cmd *cobra.Command, args []string) error {
 	if len(args) > 1 {
 		rawPath = args[1]
 	}
-	root, _, err := resolveTrustedRoot(args[0])
+	reader, err := newUnixFSReader(client)
 	if err != nil {
 		return err
 	}
-	segments, err := unixfsmodel.ParsePath(rawPath)
+	roots, err := rootsForSelector(args[0])
 	if err != nil {
 		return err
 	}
-	request, err := protocol.NewResolveRequest(malt.ResolveRequest{Root: root, Segments: segments})
+	app, err := application.NewUnixFS(reader, nil, roots)
 	if err != nil {
 		return err
 	}
-	result, err := client.ResolveContract(cmd.Context(), request)
+	resolution, err := app.Resolve(cmd.Context(), args[0], rawPath)
 	if err != nil {
 		return daemonCommandError(err)
 	}
-	verifier, err := clientverifier.NewDefault()
-	if err != nil {
-		return fmt.Errorf("initialize local verifier: %w", err)
-	}
-	if err := verifier.VerifyResolve(cmd.Context(), protocol.ResolveVerification{Request: request, Result: *result}); err != nil {
-		return fmt.Errorf("verify resolve result locally: %w", err)
-	}
-
-	return printResolveResult(cmd, result)
-}
-
-func printResolveResult(cmd *cobra.Command, result *protocol.ResolveResult) error {
-	printJSON(result)
+	printJSON(&resolution.Result)
 	return nil
 }

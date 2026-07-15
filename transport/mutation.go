@@ -7,7 +7,6 @@ import (
 
 	"github.com/dewebprotocol/malt/auth/arcset"
 	"github.com/dewebprotocol/malt/mutation"
-	cid "github.com/ipfs/go-cid"
 )
 
 // ApplySemanticMutation materializes a semantic mutation. It does not accept
@@ -21,30 +20,6 @@ func (c *Client) ApplySemanticMutation(ctx context.Context, mut mutation.Semanti
 		return nil, err
 	}
 	return c.ApplyRootSemanticMutation(ctx, mut.BaseRoot.String(), req)
-}
-
-func (c *Client) CreateFixedListBaseRoot(ctx context.Context) (cid.Cid, error) {
-	resp, err := c.CreatePayloadRoot(ctx, nil)
-	if err != nil {
-		return cid.Undef, err
-	}
-	root, err := cid.Decode(resp.Root)
-	if err != nil {
-		return cid.Undef, fmt.Errorf("decode temporary root CID: %w", err)
-	}
-	return root, nil
-}
-
-func (c *Client) ApplyFixedListPayloadMutation(ctx context.Context, mut mutation.SemanticMutation) (cid.Cid, error) {
-	resp, err := c.ApplySemanticMutation(ctx, mut)
-	if err != nil {
-		return cid.Undef, err
-	}
-	root, err := cid.Decode(resp.NewRoot)
-	if err != nil {
-		return cid.Undef, fmt.Errorf("decode list root CID: %w", err)
-	}
-	return root, nil
 }
 
 func semanticMutationRequestFromCore(mut mutation.SemanticMutation) (*SemanticMutationRequest, error) {

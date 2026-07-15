@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 
+	"github.com/dewebprotocol/malt-client/application"
 	client "github.com/dewebprotocol/malt-client/transport"
 	unixfs "github.com/dewebprotocol/malt-client/unixfs"
 	"github.com/spf13/cobra"
@@ -40,10 +41,15 @@ func newUnixFSReader(remote *client.Client) (unixfs.Reader, error) {
 }
 
 func newUnixFSWriter(remote *client.Client) (unixfs.Writer, error) {
+	lists, err := unixfs.NewGatewayMutationAdapter(remote)
+	if err != nil {
+		return nil, err
+	}
 	return unixfs.NewWriter(unixfs.WriterOptions{
 		Remote: remote,
 		Blocks: remote,
 		Roots:  remote,
+		Lists:  lists,
 	})
 }
 
@@ -52,16 +58,20 @@ func runStat(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	root, _, err := resolveTrustedRoot(args[0])
-	if err != nil {
-		return err
-	}
 	path := optionalPath(args)
 	reader, err := newUnixFSReader(remote)
 	if err != nil {
 		return err
 	}
-	stat, err := reader.Stat(cmd.Context(), root, path)
+	roots, err := rootsForSelector(args[0])
+	if err != nil {
+		return err
+	}
+	app, err := application.NewUnixFS(reader, nil, roots)
+	if err != nil {
+		return err
+	}
+	stat, err := app.Stat(cmd.Context(), args[0], path)
 	if err != nil {
 		return daemonCommandError(err)
 	}
@@ -79,11 +89,15 @@ func runCat(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	root, _, err := resolveTrustedRoot(args[0])
+	reader, err := newUnixFSReader(remote)
 	if err != nil {
 		return err
 	}
-	reader, err := newUnixFSReader(remote)
+	roots, err := rootsForSelector(args[0])
+	if err != nil {
+		return err
+	}
+	app, err := application.NewUnixFS(reader, nil, roots)
 	if err != nil {
 		return err
 	}
@@ -91,9 +105,9 @@ func runCat(cmd *cobra.Command, args []string) error {
 	if offsetSet {
 		offset, _ := cmd.Flags().GetUint64("offset")
 		length, _ := cmd.Flags().GetUint64("length")
-		result, err = reader.ReadFileRange(cmd.Context(), root, optionalPath(args), offset, length)
+		result, err = app.ReadFileRange(cmd.Context(), args[0], optionalPath(args), offset, length)
 	} else {
-		result, err = reader.ReadFile(cmd.Context(), root, optionalPath(args))
+		result, err = app.ReadFile(cmd.Context(), args[0], optionalPath(args))
 	}
 	if err != nil {
 		return daemonCommandError(err)
@@ -107,26 +121,21 @@ func runRemove(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	root, alias, err := resolveTrustedRoot(args[0])
-	if err != nil {
-		return err
-	}
 	writer, err := newUnixFSWriter(remote)
 	if err != nil {
 		return err
 	}
-	result, err := writer.RemovePath(cmd.Context(), root, args[1])
+	roots, err := rootsForSelector(args[0])
+	if err != nil {
+		return err
+	}
+	app, err := application.NewUnixFS(writer, writer, roots)
+	if err != nil {
+		return err
+	}
+	result, err := app.RemovePath(cmd.Context(), args[0], args[1])
 	if err != nil {
 		return daemonCommandError(err)
-	}
-	if alias != "" {
-		store, _, err := openTrustStore()
-		if err != nil {
-			return err
-		}
-		if _, err := store.AddCandidate(alias, result.CandidateRoot.String(), root.String(), "malt rm"); err != nil {
-			return fmt.Errorf("record removal candidate: %w", err)
-		}
 	}
 	printJSON(result)
 	return nil

@@ -5,7 +5,10 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/dewebprotocol/malt-client/application"
+	clientadd "github.com/dewebprotocol/malt-client/application/add"
 	gatewayclient "github.com/dewebprotocol/malt-client/transport"
+	"github.com/dewebprotocol/malt-client/unixfs"
 	"github.com/spf13/cobra"
 )
 
@@ -31,8 +34,8 @@ func init() {
 	addCmd.Flags().StringVarP(&addPrefixFlag, "prefix", "p", "", "Prefix inside the result tree")
 	addCmd.Flags().BoolVarP(&addWrapFlag, "wrap", "w", false, "Wrap all inputs under one directory")
 	addCmd.Flags().StringVar(&addWrapNameFlag, "wrap-name", "", "Wrapper directory name (required for multi-input --wrap)")
-	addCmd.Flags().StringVar(&addTargetFlag, "target", addTargetMALT, "Target substrate: malt or merkle-dag")
-	addCmd.Flags().StringVar(&addModelFlag, "model", addModelUnixFS, "Source data model/schema")
+	addCmd.Flags().StringVar(&addTargetFlag, "target", clientadd.TargetMALT, "Target substrate: malt or merkle-dag")
+	addCmd.Flags().StringVar(&addModelFlag, "model", clientadd.ModelUnixFS, "Source data model/schema")
 	addCmd.Flags().StringVar(&addLayoutFlag, "layout", "", "MALT UnixFS materialization layout: hybrid")
 	addCmd.Flags().StringVar(&addFileLayoutFlag, "file-layout", "", "Merkle DAG UnixFS file layout: balanced or trickle")
 	addCmd.Flags().StringVar(&addDirLayoutFlag, "dir-layout", "", "Merkle DAG UnixFS directory layout: basic, hamt, or adaptive")
@@ -72,7 +75,7 @@ type addSummary struct {
 
 func runAdd(cmd *cobra.Command, args []string) error {
 	ctx := cmd.Context()
-	opts, err := normalizeAddBuildOptions(addBuildOptions{
+	opts, err := clientadd.NormalizeOptions(clientadd.Options{
 		Prefix:     addPrefixFlag,
 		Wrap:       addWrapFlag,
 		WrapName:   addWrapNameFlag,
@@ -81,7 +84,7 @@ func runAdd(cmd *cobra.Command, args []string) error {
 		Layout:     addLayoutFlag,
 		FileLayout: addFileLayoutFlag,
 		DirLayout:  addDirLayoutFlag,
-		Ignore: addIgnoreOptions{
+		Ignore: clientadd.IgnoreOptions{
 			NoGitignore:  addNoGitignoreFlag,
 			NoMaltignore: addNoMaltignoreFlag,
 			IgnoreFiles:  addIgnoreFileFlags,
@@ -96,34 +99,38 @@ func runAdd(cmd *cobra.Command, args []string) error {
 	}
 
 	var remote *gatewayclient.Client
-	workingRoot := strings.TrimSpace(addRootFlag)
-	var candidateStoreAlias string
-	if opts.Target == addTargetMerkleDAG && (workingRoot != "" || strings.TrimSpace(addAliasFlag) != "") {
-		return fmt.Errorf("--root and --alias are only supported with --target malt")
-	}
-	if opts.Target == addTargetMALT && addAliasFlag != "" {
-		if workingRoot != "" {
-			return fmt.Errorf("--alias and --root cannot be used together")
-		}
-		store, _, err := openTrustStore()
-		if err != nil {
-			return err
-		}
-		record, err := store.Get(addAliasFlag)
-		if err != nil {
-			return err
-		}
-		workingRoot = record.AcceptedRoot
-		candidateStoreAlias = record.Alias
-	}
-	if opts.Target == addTargetMALT {
+	var addGateway clientadd.Gateway
+	if opts.Target == clientadd.TargetMALT {
 		remote, err = gatewayClient()
 		if err != nil {
 			return err
 		}
+		lists, err := unixfs.NewGatewayMutationAdapter(remote)
+		if err != nil {
+			return err
+		}
+		addGateway, err = clientadd.NewGateway(remote, lists)
+		if err != nil {
+			return err
+		}
 	}
-
-	result, err := addInputsWithUnixFS(ctx, remote, casClient, args, workingRoot, opts)
+	var roots *application.Roots
+	if strings.TrimSpace(addAliasFlag) != "" {
+		store, _, err := openTrustStore()
+		if err != nil {
+			return err
+		}
+		roots, err = application.NewRoots(store)
+		if err != nil {
+			return err
+		}
+	}
+	execution, err := clientadd.Run(ctx, roots, addGateway, casClient, clientadd.Request{
+		Inputs:  args,
+		Root:    addRootFlag,
+		Alias:   addAliasFlag,
+		Options: opts,
+	})
 	if err != nil {
 		var apiErr *gatewayclient.Error
 		if errors.As(err, &apiErr) {
@@ -131,18 +138,8 @@ func runAdd(cmd *cobra.Command, args []string) error {
 		}
 		return err
 	}
-	if result.NewRoot == "" {
-		return fmt.Errorf("failed to materialize a new root")
-	}
-	if candidateStoreAlias != "" {
-		store, _, err := openTrustStore()
-		if err != nil {
-			return err
-		}
-		if _, err := store.AddCandidate(candidateStoreAlias, result.NewRoot, workingRoot, "malt add"); err != nil {
-			return fmt.Errorf("record candidate root: %w", err)
-		}
-	}
+	result := execution.Result
+	opts = execution.Options
 
 	summary := addSummary{
 		Target:           opts.Target,
@@ -150,7 +147,7 @@ func runAdd(cmd *cobra.Command, args []string) error {
 		Layout:           opts.Layout,
 		FileLayout:       opts.FileLayout,
 		DirLayout:        opts.DirLayout,
-		OldRoot:          workingRoot,
+		OldRoot:          execution.BaseRoot,
 		NewRoot:          result.NewRoot,
 		Files:            result.Files,
 		Bytes:            result.Bytes,
@@ -172,7 +169,7 @@ func runAdd(cmd *cobra.Command, args []string) error {
 
 func formatAddSummary(summary addSummary) string {
 	var b strings.Builder
-	if summary.Target == addTargetMerkleDAG {
+	if summary.Target == clientadd.TargetMerkleDAG {
 		fmt.Fprintf(&b, "Imported %d files, %d bytes into Merkle DAG UnixFS\n", summary.Files, summary.Bytes)
 		fmt.Fprintf(&b, "Result root: %s\n", summary.NewRoot)
 		return b.String()

@@ -22,6 +22,11 @@ This is an experimental, pre-v1 client. It currently provides the `malt` CLI,
 a local trusted-root daemon, and a UnixFS application adapter. There is no
 independent `malt-client` release tag yet; build from a pinned commit.
 
+The current development baseline pins MALT core commit `fc8cd2d1f071` from
+[core PR #169](https://github.com/DeWebProtocol/malt/pull/169) through Go
+pseudo-version `v0.0.7-0.20260715095704-fc8cd2d1f071`. This is an exact
+integration dependency, not a claim that MALT core v0.0.7 has been released.
+
 ## Build
 
 Go 1.25.7 or newer is required.
@@ -90,12 +95,26 @@ The public Go API is importable as:
 
 ```go
 import (
+    "github.com/dewebprotocol/malt-client/application"
     "github.com/dewebprotocol/malt-client/merkledag"
     "github.com/dewebprotocol/malt-client/transport"
     "github.com/dewebprotocol/malt-client/trust"
     "github.com/dewebprotocol/malt-client/unixfs"
 )
 ```
+
+Package `application` is the reusable use-case layer used by the CLI and local
+daemon. It selects explicit or locally accepted roots, composes verified UnixFS
+and Merkle DAG reads, records writer results as candidates, and exposes
+candidate promotion only as an explicit call. Its `application/add` package
+owns the CLI-independent ignore, symlink, staging, hybrid materialization, and
+Merkle DAG import workflow used by `malt add`.
+
+Explicit CIDs are selected without opening `roots.json`; the trust store is
+required only for an alias. A missing, corrupt, or unwritable alias store
+therefore cannot block an otherwise valid explicit-CID operation.
+Explicitly typed alias inputs such as `malt add --alias` always perform alias
+lookup, even when the alias text happens to be CID-shaped.
 
 Package `transport` is an untrusted gateway transport. Package `trust` owns
 accepted/candidate root policy. Package `unixfs`
@@ -106,10 +125,13 @@ a caller-selected root, verifies ProofLists locally, enforces resolve-to-read
 continuity, and verifies raw, manifest, and measured-list payload bytes.
 
 Package `merkledag` owns the gateway's distinct compatibility profiles over a
-narrow profile transport. `ResolveMerkleDAGVerified` and
+narrow fixed-route profile transport. `ResolveMerkleDAGVerified` and
 `ReadMerkleDAGVerified` recompute every
 evidence block CID and replay the UnixFS link traversal locally. These results
 are never represented as MALT ProofLists.
+
+The transport exposes only fixed Merkle DAG resolve/read route capabilities;
+applications cannot supply an arbitrary Gateway route and JSON body.
 
 The transport exposes bounded ordered CAS `PutBatch`/`HasBatch` and a
 typed diagnostic metrics snapshot. Package `merkledag/ipld` restores the

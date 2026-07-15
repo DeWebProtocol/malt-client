@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 
 	"github.com/dewebprotocol/malt-client/internal/cas"
@@ -24,6 +25,21 @@ func TestNewRejectsNonAbsoluteBaseURL(t *testing.T) {
 	}
 	if _, err := client.New(client.Options{BaseURL: "ftp://gateway.example"}); err == nil {
 		t.Fatal("New accepted a non-HTTP gateway URL")
+	}
+}
+
+func TestClientExposesFixedMerkleDAGRoutesWithoutArbitraryProfileEscapeHatch(t *testing.T) {
+	typ := reflect.TypeOf((*client.Client)(nil))
+	if _, ok := typ.MethodByName("PostProfileJSON"); ok {
+		t.Fatal("transport client still exposes arbitrary profile route access")
+	}
+	if _, ok := typ.MethodByName("CreatePayloadRoot"); ok {
+		t.Fatal("generic transport client exposes UnixFS payload-root semantics")
+	}
+	for _, name := range []string{"PostMerkleDAGResolve", "PostMerkleDAGRead"} {
+		if _, ok := typ.MethodByName(name); !ok {
+			t.Fatalf("transport client is missing fixed capability %s", name)
+		}
 	}
 }
 
