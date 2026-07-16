@@ -5,7 +5,7 @@ go 1.25.7
 require (
 	github.com/Microsoft/go-winio v0.6.2
 	github.com/crackcomm/go-gitignore v0.0.0-20241020182519-7843d2ba8fdf
-	github.com/dewebprotocol/malt v0.0.7-0.20260715095704-fc8cd2d1f071
+	github.com/dewebprotocol/malt v0.0.7-0.20260716103753-4b759ecd21b3
 	github.com/ipfs/boxo v0.41.0
 	github.com/ipfs/go-block-format v0.2.4
 	github.com/ipfs/go-cid v0.6.2

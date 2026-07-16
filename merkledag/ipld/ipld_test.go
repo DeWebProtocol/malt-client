@@ -50,7 +50,9 @@ func TestParserFollowsDAGJSONLinkAndBindsEveryBlockCID(t *testing.T) {
 }
 
 func TestCodecRegistryCanAddApplicationCodec(t *testing.T) {
-	const codec = 0x300001
+	// Keep the application codec in the private-use area but outside MALT's
+	// 0x30VSBB typed-root namespace.
+	const codec = 0x310001
 	data := []byte("custom")
 	_, key, err := func() ([]byte, cid.Cid, error) {
 		// Reuse a raw CID prefix then replace the codec for the custom registry.
