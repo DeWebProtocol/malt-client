@@ -249,8 +249,8 @@ func (r *verifiedReader) Stat(ctx context.Context, trustedRoot cid.Cid, rawPath 
 		return nil, err
 	}
 	stat := &Stat{NodeRoot: resolution.Target, Payload: resolution.Target, StorageKind: unixfsmodel.StorageKindFromCID(resolution.Target), Resolution: *resolution}
-	switch maltcid.SemanticKindOf(resolution.Target) {
-	case maltcid.SemanticKindMap:
+	switch stat.StorageKind {
+	case "map":
 		segments := append([]string(nil), resolution.Request.Segments...)
 		segments = append(segments, "@payload")
 		payloadBinding, err := r.resolveSegments(ctx, trustedRoot, segments)
@@ -271,7 +271,7 @@ func (r *verifiedReader) Stat(ctx context.Context, trustedRoot cid.Cid, rawPath 
 		stat.Entries = entries
 		stat.PayloadBinding = payloadBinding
 		return stat, nil
-	case maltcid.SemanticKindList:
+	case "list":
 		metadata, totalSize, chunkSize, err := r.readListMetadata(ctx, resolution.Target)
 		if err != nil {
 			return nil, err
@@ -282,7 +282,7 @@ func (r *verifiedReader) Stat(ctx context.Context, trustedRoot cid.Cid, rawPath 
 		stat.ChunkSize = chunkSize
 		stat.MetadataRead = metadata
 		return stat, nil
-	case maltcid.SemanticKindUnknown:
+	case "raw":
 		body, err := r.getBoundBlock(ctx, resolution.Target)
 		if err != nil {
 			return nil, fmt.Errorf("fetch raw file payload: %w", err)
@@ -292,7 +292,7 @@ func (r *verifiedReader) Stat(ctx context.Context, trustedRoot cid.Cid, rawPath 
 		stat.Size = uint64(len(body))
 		return stat, nil
 	default:
-		return nil, fmt.Errorf("unsupported UnixFS target kind for %s", resolution.Target)
+		return nil, fmt.Errorf("unsupported UnixFS target CID %s", resolution.Target)
 	}
 }
 
@@ -313,16 +313,20 @@ func (r *verifiedReader) ReadFileRange(ctx context.Context, trustedRoot cid.Cid,
 }
 
 func (r *verifiedReader) readResolvedFile(ctx context.Context, resolution *Resolution, offset uint64, length *uint64) (*ReadResult, error) {
-	if maltcid.SemanticKindOf(resolution.Target) == maltcid.SemanticKindMap {
+	switch unixfsmodel.StorageKindFromCID(resolution.Target) {
+	case "map":
 		return nil, ErrNotFile
-	}
-	if maltcid.SemanticKindOf(resolution.Target) == maltcid.SemanticKindList {
+	case "list":
 		result, err := r.readListPayload(ctx, resolution.Target, offset, length)
 		if err != nil {
 			return nil, err
 		}
 		result.Resolution = resolution
 		return result, nil
+	case "raw":
+		// Continue below and bind the returned bytes to the raw CID.
+	default:
+		return nil, fmt.Errorf("unsupported UnixFS target CID %s", resolution.Target)
 	}
 	body, err := r.getBoundBlock(ctx, resolution.Target)
 	if err != nil {

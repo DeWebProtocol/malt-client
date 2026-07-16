@@ -8,8 +8,9 @@ import (
 	mh "github.com/multiformats/go-multihash"
 )
 
-// CodecMaltManifest is the UnixFS manifest CID codec.
-const CodecMaltManifest = 0x300005 // malt-manifest
+// CodecMaltManifest is the UnixFS application manifest CID codec. It is kept
+// outside MALT Core's reserved 0x30VSBB typed-root namespace.
+const CodecMaltManifest = 0x310001 // malt-manifest
 
 // NewManifestCID creates a CID for a directory manifest payload.
 func NewManifestCID(payload []byte) (cid.Cid, error) {
