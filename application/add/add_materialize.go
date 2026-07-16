@@ -9,7 +9,6 @@ import (
 	unixfsmodel "github.com/dewebprotocol/malt-client/unixfs/model"
 	"github.com/dewebprotocol/malt/protocol"
 	clientverifier "github.com/dewebprotocol/malt/sdk/verifier"
-	"github.com/dewebprotocol/malt/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
 )
 
@@ -33,11 +32,12 @@ func (s addStagedPathStatter) StatStagedPath(ctx context.Context, root string, p
 	if err != nil {
 		return unixfs.StagedPathStat{}, err
 	}
-	storageKind := unixfsmodel.StorageKindFromCID(target)
-	kind := unixfs.StagedKindFile
+	kind, storageKind, err := classifyStagedTarget(target)
+	if err != nil {
+		return unixfs.StagedPathStat{}, err
+	}
 	payload := ""
-	if maltcid.SemanticKindOf(target) == maltcid.SemanticKindMap {
-		kind = unixfs.StagedKindDirectory
+	if kind == unixfs.StagedKindDirectory {
 		payloadTarget, err := s.resolveAndVerify(ctx, rootCID, append(append([]string(nil), segments...), "@payload"))
 		if err != nil {
 			return unixfs.StagedPathStat{}, fmt.Errorf("resolve directory payload for %q: %w", p, err)
@@ -50,6 +50,18 @@ func (s addStagedPathStatter) StatStagedPath(ctx context.Context, root string, p
 		Key:         target.String(),
 		Payload:     payload,
 	}, nil
+}
+
+func classifyStagedTarget(target cid.Cid) (kind, storageKind string, err error) {
+	storageKind = unixfsmodel.StorageKindFromCID(target)
+	switch storageKind {
+	case "map":
+		return unixfs.StagedKindDirectory, storageKind, nil
+	case "list", "raw":
+		return unixfs.StagedKindFile, storageKind, nil
+	default:
+		return "", "", fmt.Errorf("unsupported UnixFS target CID %s", target)
+	}
 }
 
 func (s addStagedPathStatter) resolveAndVerify(ctx context.Context, root cid.Cid, segments []string) (cid.Cid, error) {

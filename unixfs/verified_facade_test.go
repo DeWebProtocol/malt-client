@@ -13,7 +13,9 @@ import (
 	runtimegraph "github.com/dewebprotocol/malt/graph/runtime"
 	"github.com/dewebprotocol/malt/mutation"
 	"github.com/dewebprotocol/malt/protocol"
+	"github.com/dewebprotocol/malt/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
+	mh "github.com/multiformats/go-multihash"
 )
 
 type realRemote struct {
@@ -187,6 +189,32 @@ func TestVerifiedReaderBindsDirectoryRawAndLargeListPayloads(t *testing.T) {
 	}
 	if !bytes.Equal(full.Body, large) {
 		t.Fatal("full list-backed body differs")
+	}
+}
+
+func TestVerifiedReaderRejectsAuthenticatedUnknownTargetCodec(t *testing.T) {
+	remote := newRealRemote(t)
+	digest, err := mh.Sum([]byte("not a commitment"), mh.SHA2_256, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The codec claims to be a map/KZG root, but the non-identity multihash
+	// makes it an invalid typed root. A valid parent proof may authenticate this
+	// opaque value, but the UnixFS client must not reinterpret it as raw bytes.
+	unknown := cid.NewCidV1(maltcid.CodecMaltMapKZG, digest)
+	root, err := remote.CreateStagedRoot(t.Context(), map[string]string{"file.txt": unknown.String()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader, err := unixfs.NewReader(unixfs.ReaderOptions{Remote: remote, Blocks: remote})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reader.Stat(t.Context(), root, "file.txt"); err == nil {
+		t.Fatal("stat accepted an authenticated target with an invalid typed-root encoding")
+	}
+	if _, err := reader.ReadFile(t.Context(), root, "file.txt"); err == nil {
+		t.Fatal("read accepted an authenticated target with an invalid typed-root encoding")
 	}
 }
 

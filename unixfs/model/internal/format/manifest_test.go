@@ -32,6 +32,9 @@ func TestManifestCIDDoesNotOverlapMaltStructureCID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewManifestCID: %v", err)
 	}
+	if codec := manifestCID.Prefix().Codec; codec >= 0x300000 && codec <= 0x30ffff {
+		t.Fatalf("manifest codec %x occupies the reserved 0x30VSBB typed-root namespace", codec)
+	}
 	if maltcid.IsMaltCid(manifestCID) {
 		t.Fatal("manifest CID should not be recognized as a MALT map/list root")
 	}
