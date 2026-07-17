@@ -49,6 +49,9 @@ func TestClientBatchCASAndMetricsContracts(t *testing.T) {
 			withStorage := r.URL.Query().Get("storage") == "logical"
 			var storage *client.StorageMetrics
 			if withStorage {
+				if r.Header.Get("Authorization") != "Bearer operator-secret" {
+					t.Fatalf("storage metrics Authorization = %q", r.Header.Get("Authorization"))
+				}
 				storage = &client.StorageMetrics{Method: "logical-kv-scan", LogicalBytes: 42, CASBlobBytes: 11}
 			}
 			_ = json.NewEncoder(w).Encode(client.MetricsSnapshot{
@@ -60,7 +63,7 @@ func TestClientBatchCASAndMetricsContracts(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	transport, err := client.NewWithBaseURL(server.URL)
+	transport, err := client.New(client.Options{BaseURL: server.URL, OperatorBearerToken: "operator-secret"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,5 +88,15 @@ func TestClientBatchCASAndMetricsContracts(t *testing.T) {
 	metrics, err = transport.MetricsWithStorage(t.Context())
 	if err != nil || metrics.Storage == nil || metrics.Storage.LogicalBytes != 42 {
 		t.Fatalf("metrics with storage = %#v err=%v", metrics, err)
+	}
+}
+
+func TestMetricsWithStorageRequiresOperatorToken(t *testing.T) {
+	transport, err := client.NewWithBaseURL("https://gateway.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := transport.MetricsWithStorage(t.Context()); err == nil {
+		t.Fatal("MetricsWithStorage accepted a client without an operator token")
 	}
 }

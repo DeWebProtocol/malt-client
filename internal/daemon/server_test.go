@@ -88,7 +88,7 @@ func TestListenCreatesPrivateUnixSocket(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	socket := filepath.Join(t.TempDir(), "client.sock")
+	socket := shortSocketPath(t)
 	listener, err := server.Listen(socket)
 	if err != nil {
 		t.Fatal(err)
@@ -112,7 +112,7 @@ func TestListenRefusesToReplaceRegularFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	socket := filepath.Join(t.TempDir(), "client.sock")
+	socket := shortSocketPath(t)
 	if err := os.WriteFile(socket, []byte("do not replace"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +130,7 @@ func TestListenRefusesToReplaceLiveUnixSocket(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	socket := filepath.Join(t.TempDir(), "client.sock")
+	socket := shortSocketPath(t)
 	live, err := net.Listen("unix", socket)
 	if err != nil {
 		t.Skipf("unix sockets are unavailable: %v", err)
@@ -139,4 +139,14 @@ func TestListenRefusesToReplaceLiveUnixSocket(t *testing.T) {
 	if _, err := server.Listen(socket); err == nil || !strings.Contains(err.Error(), "live socket") {
 		t.Fatalf("Listen error = %v, want live-socket refusal", err)
 	}
+}
+
+func shortSocketPath(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("/tmp", "malt-client-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return filepath.Join(dir, "client.sock")
 }

@@ -4,6 +4,7 @@ package importer
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -14,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	clientcas "github.com/dewebprotocol/malt-client/internal/cas"
 	chunker "github.com/ipfs/boxo/chunker"
 	merkledag "github.com/ipfs/boxo/ipld/merkledag"
 	unixfs "github.com/ipfs/boxo/ipld/unixfs"
@@ -608,7 +610,10 @@ func (s *casDAGService) AddMany(ctx context.Context, nodes []ipld.Node) error {
 func (s *casDAGService) Get(ctx context.Context, c cid.Cid) (ipld.Node, error) {
 	data, err := s.store.Get(ctx, c)
 	if err != nil {
-		return nil, ipld.ErrNotFound{Cid: c}
+		if errors.Is(err, clientcas.ErrNotFound) {
+			return nil, ipld.ErrNotFound{Cid: c}
+		}
+		return nil, fmt.Errorf("load Merkle DAG block %s: %w", c, err)
 	}
 	block, err := blocks.NewBlockWithCid(data, c)
 	if err != nil {

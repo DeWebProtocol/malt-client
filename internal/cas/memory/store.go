@@ -24,7 +24,7 @@ func (s *Store) Get(_ context.Context, c cid.Cid) ([]byte, error) {
 	defer s.mu.RUnlock()
 	data, ok := s.blocks[c.String()]
 	if !ok {
-		return nil, fmt.Errorf("CAS block %s not found", c)
+		return nil, fmt.Errorf("%w: %s", cas.ErrNotFound, c)
 	}
 	return append([]byte(nil), data...), nil
 }

@@ -32,6 +32,7 @@ func (e *Error) Error() string {
 type Options struct {
 	BaseURL               string
 	HTTPClient            *http.Client
+	OperatorBearerToken   string
 	MaxJSONResponseBytes  int64
 	MaxBlobResponseBytes  int64
 	MaxErrorResponseBytes int64
@@ -48,6 +49,7 @@ const (
 type Client struct {
 	baseURL               string
 	http                  *http.Client
+	operatorBearerToken   string
 	maxJSONResponseBytes  int64
 	maxBlobResponseBytes  int64
 	maxErrorResponseBytes int64
@@ -83,7 +85,7 @@ func New(opts Options) (*Client, error) {
 		httpClient = &http.Client{Timeout: 5 * time.Minute}
 	}
 	return &Client{
-		baseURL: baseURL, http: httpClient,
+		baseURL: baseURL, http: httpClient, operatorBearerToken: strings.TrimSpace(opts.OperatorBearerToken),
 		maxJSONResponseBytes: maxJSON, maxBlobResponseBytes: maxBlob, maxErrorResponseBytes: maxError,
 	}, nil
 }
@@ -148,7 +150,11 @@ func (c *Client) Get(ctx context.Context, key cid.Cid) ([]byte, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, c.responseError(resp)
+		responseErr := c.responseError(resp)
+		if resp.StatusCode == http.StatusNotFound {
+			return nil, fmt.Errorf("%w: %w", cas.ErrNotFound, responseErr)
+		}
+		return nil, responseErr
 	}
 	data, err := readBounded(resp.Body, c.maxBlobResponseBytes, "gateway CAS body")
 	if err != nil {
