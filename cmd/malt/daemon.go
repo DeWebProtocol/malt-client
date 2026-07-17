@@ -156,6 +156,9 @@ func runDaemonStart(*cobra.Command, []string) error {
 	if err != nil {
 		return err
 	}
+	if err := clientdaemon.ValidateSocketPath(cfg.Daemon.SocketPath); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(cfg.Daemon.SocketPath), 0o700); err != nil {
 		return err
 	}
@@ -167,6 +170,9 @@ func runDaemonStart(*cobra.Command, []string) error {
 func runDaemonRestart(*cobra.Command, []string) error {
 	cfg, err := loadRuntimeConfig()
 	if err != nil {
+		return err
+	}
+	if err := clientdaemon.ValidateSocketPath(cfg.Daemon.SocketPath); err != nil {
 		return err
 	}
 	if err := os.MkdirAll(filepath.Dir(cfg.Daemon.SocketPath), 0o700); err != nil {

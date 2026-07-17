@@ -7,15 +7,11 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 )
 
 func (s *Server) Listen(socketPath string) (net.Listener, error) {
-	if strings.TrimSpace(socketPath) == "" {
-		return nil, fmt.Errorf("daemon socket path is empty")
-	}
-	if err := validateSocketPath(socketPath); err != nil {
+	if err := ValidateSocketPath(socketPath); err != nil {
 		return nil, err
 	}
 	if err := os.MkdirAll(filepath.Dir(socketPath), 0o700); err != nil {

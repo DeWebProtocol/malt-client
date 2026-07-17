@@ -1,6 +1,18 @@
 package daemon
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
+
+// ValidateSocketPath checks the configured local daemon endpoint before any
+// lifecycle code creates directories, locks, logs, or child processes.
+func ValidateSocketPath(path string) error {
+	if strings.TrimSpace(path) == "" {
+		return fmt.Errorf("daemon socket path is empty")
+	}
+	return validateSocketPath(path)
+}
 
 func validateSocketPathLength(path string, maxBytes int) error {
 	if len([]byte(path)) <= maxBytes {

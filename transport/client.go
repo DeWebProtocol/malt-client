@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"path"
@@ -30,8 +31,11 @@ func (e *Error) Error() string {
 
 // Options configures the public managed-gateway transport.
 type Options struct {
-	BaseURL               string
-	HTTPClient            *http.Client
+	BaseURL    string
+	HTTPClient *http.Client
+	// OperatorBearerToken is sent only by MetricsWithStorage. Non-loopback HTTP
+	// base URLs are rejected when it is configured, and credentialed redirects
+	// are never followed.
 	OperatorBearerToken   string
 	MaxJSONResponseBytes  int64
 	MaxBlobResponseBytes  int64
@@ -68,6 +72,10 @@ func New(opts Options) (*Client, error) {
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
 		return nil, fmt.Errorf("gateway base URL must use http or https")
 	}
+	operatorToken := strings.TrimSpace(opts.OperatorBearerToken)
+	if operatorToken != "" && parsed.Scheme != "https" && !isLoopbackGatewayHost(parsed.Hostname()) {
+		return nil, fmt.Errorf("operator bearer token requires HTTPS or a loopback HTTP gateway base URL")
+	}
 	maxJSON, err := responseLimit(opts.MaxJSONResponseBytes, DefaultMaxJSONResponseBytes, "JSON")
 	if err != nil {
 		return nil, err
@@ -85,7 +93,7 @@ func New(opts Options) (*Client, error) {
 		httpClient = &http.Client{Timeout: 5 * time.Minute}
 	}
 	return &Client{
-		baseURL: baseURL, http: httpClient, operatorBearerToken: strings.TrimSpace(opts.OperatorBearerToken),
+		baseURL: baseURL, http: httpClient, operatorBearerToken: operatorToken,
 		maxJSONResponseBytes: maxJSON, maxBlobResponseBytes: maxBlob, maxErrorResponseBytes: maxError,
 	}, nil
 }
@@ -399,7 +407,19 @@ func (c *Client) postProfileJSON(ctx context.Context, route string, body []byte)
 }
 
 func (c *Client) execute(req *http.Request, out any) error {
-	resp, err := c.http.Do(req)
+	return c.executeWithClient(c.http, req, out)
+}
+
+func (c *Client) executeCredentialed(req *http.Request, out any) error {
+	httpClient := *c.http
+	httpClient.CheckRedirect = func(next *http.Request, _ []*http.Request) error {
+		return fmt.Errorf("refusing credentialed gateway redirect to %s", next.URL.Redacted())
+	}
+	return c.executeWithClient(&httpClient, req, out)
+}
+
+func (c *Client) executeWithClient(httpClient *http.Client, req *http.Request, out any) error {
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return err
 	}
@@ -419,6 +439,14 @@ func (c *Client) execute(req *http.Request, out any) error {
 		return fmt.Errorf("decode gateway JSON response: %w", err)
 	}
 	return nil
+}
+
+func isLoopbackGatewayHost(host string) bool {
+	if strings.EqualFold(strings.TrimSpace(host), "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func responseLimit(value, fallback int64, kind string) (int64, error) {

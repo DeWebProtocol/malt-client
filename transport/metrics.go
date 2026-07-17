@@ -91,7 +91,7 @@ func (c *Client) MetricsWithStorage(ctx context.Context) (*MetricsSnapshot, erro
 	}
 	req.Header.Set("Authorization", "Bearer "+c.operatorBearerToken)
 	var snapshot MetricsSnapshot
-	if err := c.execute(req, &snapshot); err != nil {
+	if err := c.executeCredentialed(req, &snapshot); err != nil {
 		return nil, err
 	}
 	if snapshot.Profile != GatewayMetricsProfile {

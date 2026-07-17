@@ -5,7 +5,6 @@ package daemon
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"fmt"
 	"net"
 	"strings"
 
@@ -20,8 +19,8 @@ func PipeName(endpoint string) string {
 }
 
 func (s *Server) Listen(endpoint string) (net.Listener, error) {
-	if strings.TrimSpace(endpoint) == "" {
-		return nil, fmt.Errorf("daemon endpoint is empty")
+	if err := ValidateSocketPath(endpoint); err != nil {
+		return nil, err
 	}
 	return winio.ListenPipe(PipeName(endpoint), &winio.PipeConfig{
 		SecurityDescriptor: "D:P(A;;GA;;;SY)(A;;GA;;;OW)",

@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -98,5 +100,57 @@ func TestMetricsWithStorageRequiresOperatorToken(t *testing.T) {
 	}
 	if _, err := transport.MetricsWithStorage(t.Context()); err == nil {
 		t.Fatal("MetricsWithStorage accepted a client without an operator token")
+	}
+}
+
+func TestNewRejectsOperatorTokenOverNonLoopbackHTTP(t *testing.T) {
+	for _, baseURL := range []string{"http://gateway.example", "http://192.0.2.1:8080"} {
+		t.Run(baseURL, func(t *testing.T) {
+			if _, err := client.New(client.Options{BaseURL: baseURL, OperatorBearerToken: "operator-secret"}); err == nil || !strings.Contains(err.Error(), "requires HTTPS or a loopback HTTP") {
+				t.Fatalf("New error = %v, want secure operator-token transport rejection", err)
+			}
+		})
+	}
+	for _, baseURL := range []string{"https://gateway.example", "http://localhost:8080", "http://127.0.0.1:8080", "http://[::1]:8080"} {
+		t.Run("allow "+baseURL, func(t *testing.T) {
+			if _, err := client.New(client.Options{BaseURL: baseURL, OperatorBearerToken: "operator-secret"}); err != nil {
+				t.Fatalf("New rejected secure or loopback operator-token transport: %v", err)
+			}
+		})
+	}
+}
+
+func TestMetricsWithStorageRejectsRedirectWithoutLeakingToken(t *testing.T) {
+	var targetRequests atomic.Int32
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		targetRequests.Add(1)
+		if got := r.Header.Get("Authorization"); got != "" {
+			t.Errorf("redirect target received Authorization %q", got)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer target.Close()
+
+	source := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer operator-secret" {
+			t.Errorf("source Authorization = %q", got)
+		}
+		http.Redirect(w, r, target.URL, http.StatusFound)
+	}))
+	defer source.Close()
+
+	transport, err := client.New(client.Options{
+		BaseURL:             source.URL,
+		HTTPClient:          source.Client(),
+		OperatorBearerToken: "operator-secret",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := transport.MetricsWithStorage(t.Context()); err == nil || !strings.Contains(err.Error(), "refusing credentialed gateway redirect") {
+		t.Fatalf("MetricsWithStorage redirect error = %v, want credentialed redirect refusal", err)
+	}
+	if got := targetRequests.Load(); got != 0 {
+		t.Fatalf("redirect target requests = %d, want 0", got)
 	}
 }

@@ -1,4 +1,4 @@
-//go:build !darwin && !windows
+//go:build !darwin && !windows && !linux && !dragonfly && !freebsd && !netbsd && !openbsd
 
 package daemon
 
