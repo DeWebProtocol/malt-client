@@ -275,6 +275,9 @@ func stopDaemon(socketPath string) error {
 }
 
 func stopDaemonWithSignal(socketPath string, signalProcess func(int) error) error {
+	if err := clientdaemon.ValidateSocketPath(socketPath); err != nil {
+		return err
+	}
 	return withDaemonLifecycleLock(socketPath, func() error {
 		return stopDaemonWithSignalLocked(socketPath, signalProcess)
 	})
