@@ -4,6 +4,7 @@ package importer
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -14,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	clientcas "github.com/dewebprotocol/malt-client/internal/cas"
 	chunker "github.com/ipfs/boxo/chunker"
 	merkledag "github.com/ipfs/boxo/ipld/merkledag"
 	unixfs "github.com/ipfs/boxo/ipld/unixfs"
@@ -37,6 +39,11 @@ const (
 	DirLayoutHAMT     = "hamt"
 	DirLayoutAdaptive = "adaptive"
 )
+
+// ErrNotFound reports that a requested CAS block is absent. Store
+// implementations outside this module must wrap this sentinel so the DAGService
+// adapter can distinguish absence from transport, cancellation, and corruption.
+var ErrNotFound = clientcas.ErrNotFound
 
 const defaultChunkSize = 262144
 
@@ -84,6 +91,7 @@ type File struct {
 // Store is the minimal CAS surface needed by the DAGService adapter.
 type Store interface {
 	PutWithCodec(ctx context.Context, data []byte, codec uint64) (cid.Cid, error)
+	// Get returns ErrNotFound, or an error wrapping it, when c is absent.
 	Get(ctx context.Context, c cid.Cid) ([]byte, error)
 }
 
@@ -608,7 +616,10 @@ func (s *casDAGService) AddMany(ctx context.Context, nodes []ipld.Node) error {
 func (s *casDAGService) Get(ctx context.Context, c cid.Cid) (ipld.Node, error) {
 	data, err := s.store.Get(ctx, c)
 	if err != nil {
-		return nil, ipld.ErrNotFound{Cid: c}
+		if errors.Is(err, ErrNotFound) {
+			return nil, ipld.ErrNotFound{Cid: c}
+		}
+		return nil, fmt.Errorf("load Merkle DAG block %s: %w", c, err)
 	}
 	block, err := blocks.NewBlockWithCid(data, c)
 	if err != nil {

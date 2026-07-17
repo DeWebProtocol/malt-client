@@ -27,7 +27,12 @@ results remain untrusted until locally verified against caller inputs.
 
 `Metrics` returns inexpensive monotonic counters. `MetricsWithStorage` also
 requests Gateway's O(live KV entries) logical scan and should be used only by
-controlled evaluation or operator tooling.
+controlled evaluation or operator tooling. Construct the transport with
+`Options.OperatorBearerToken`; the token is attached only to the logical
+storage-metrics request. A credentialed transport requires HTTPS unless its
+Gateway host is loopback (localhost, 127.0.0.0/8, or ::1). Credentialed
+requests reject redirects instead of forwarding the bearer token to another
+URL.
 
 No exported signature contains a type from `internal/`.
 

@@ -66,6 +66,9 @@ var daemonStatusCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		if err := clientdaemon.ValidateSocketPath(cfg.Daemon.SocketPath); err != nil {
+			return err
+		}
 		if err := checkDaemon(cfg.Daemon.SocketPath); err != nil {
 			return err
 		}
@@ -106,6 +109,9 @@ func init() {
 func runDaemonServe(*cobra.Command, []string) error {
 	cfg, err := loadRuntimeConfig()
 	if err != nil {
+		return err
+	}
+	if err := clientdaemon.ValidateSocketPath(cfg.Daemon.SocketPath); err != nil {
 		return err
 	}
 	store, err := truststore.Open(cfg.Daemon.StatePath)
@@ -156,6 +162,9 @@ func runDaemonStart(*cobra.Command, []string) error {
 	if err != nil {
 		return err
 	}
+	if err := clientdaemon.ValidateSocketPath(cfg.Daemon.SocketPath); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(cfg.Daemon.SocketPath), 0o700); err != nil {
 		return err
 	}
@@ -167,6 +176,9 @@ func runDaemonStart(*cobra.Command, []string) error {
 func runDaemonRestart(*cobra.Command, []string) error {
 	cfg, err := loadRuntimeConfig()
 	if err != nil {
+		return err
+	}
+	if err := clientdaemon.ValidateSocketPath(cfg.Daemon.SocketPath); err != nil {
 		return err
 	}
 	if err := os.MkdirAll(filepath.Dir(cfg.Daemon.SocketPath), 0o700); err != nil {
@@ -266,6 +278,9 @@ func stopDaemon(socketPath string) error {
 }
 
 func stopDaemonWithSignal(socketPath string, signalProcess func(int) error) error {
+	if err := clientdaemon.ValidateSocketPath(socketPath); err != nil {
+		return err
+	}
 	return withDaemonLifecycleLock(socketPath, func() error {
 		return stopDaemonWithSignalLocked(socketPath, signalProcess)
 	})

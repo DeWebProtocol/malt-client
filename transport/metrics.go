@@ -3,6 +3,7 @@ package transport
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"time"
 )
 
@@ -77,7 +78,26 @@ func (c *Client) Metrics(ctx context.Context) (*MetricsSnapshot, error) {
 // scan in addition to monotonic counters. It is intended for controlled
 // evaluation and operator diagnostics, not a high-frequency polling loop.
 func (c *Client) MetricsWithStorage(ctx context.Context) (*MetricsSnapshot, error) {
-	return c.metrics(ctx, "/v1/diagnostics/metrics?storage=logical")
+	if c == nil || c.operatorBearerToken == "" {
+		return nil, fmt.Errorf("logical storage metrics require Options.OperatorBearerToken")
+	}
+	u, err := c.endpoint("/v1/diagnostics/metrics?storage=logical")
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.operatorBearerToken)
+	var snapshot MetricsSnapshot
+	if err := c.executeCredentialed(req, &snapshot); err != nil {
+		return nil, err
+	}
+	if snapshot.Profile != GatewayMetricsProfile {
+		return nil, fmt.Errorf("unsupported gateway metrics profile %q", snapshot.Profile)
+	}
+	return &snapshot, nil
 }
 
 func (c *Client) metrics(ctx context.Context, route string) (*MetricsSnapshot, error) {

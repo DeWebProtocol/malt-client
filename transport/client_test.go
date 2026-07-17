@@ -151,6 +151,27 @@ func TestClientRejectsOversizedJSONBeforeDecode(t *testing.T) {
 	}
 }
 
+func TestGetClassifiesOnlyHTTPNotFoundAsCASNotFound(t *testing.T) {
+	payloadCID := mustBlockCID(t, []byte("missing"))
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "missing", http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	transport, err := client.NewWithBaseURL(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = transport.Get(t.Context(), payloadCID)
+	if !errors.Is(err, cas.ErrNotFound) {
+		t.Fatalf("Get error = %v, want cas.ErrNotFound", err)
+	}
+	var apiErr *client.Error
+	if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusNotFound {
+		t.Fatalf("Get error = %T %v, want structured 404", err, err)
+	}
+}
+
 func bytesOf(value byte, size int) []byte {
 	out := make([]byte, size)
 	for i := range out {

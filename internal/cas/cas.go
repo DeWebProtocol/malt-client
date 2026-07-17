@@ -3,11 +3,17 @@ package cas
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
 )
+
+// ErrNotFound reports that a requested CAS block is absent. Remote and local
+// implementations wrap this sentinel so higher layers can distinguish absence
+// from transport, cancellation, and corruption failures.
+var ErrNotFound = errors.New("cas: block not found")
 
 // Block is a CAS block to write. Codec 0 means cid.Raw.
 type Block struct {
