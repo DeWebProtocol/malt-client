@@ -12,11 +12,12 @@ import (
 	clientconfig "github.com/dewebprotocol/malt-client/internal/config"
 )
 
-func TestDaemonStartAndRestartPreflightSocketPathBeforeFilesystemSideEffects(t *testing.T) {
+func TestDaemonLifecycleCommandsPreflightSocketPathBeforeFilesystemSideEffects(t *testing.T) {
 	previousConfig := cfgFile
 	defer func() { cfgFile = previousConfig }()
 
 	commands := map[string]func() error{
+		"serve":   func() error { return runDaemonServe(nil, nil) },
 		"start":   func() error { return runDaemonStart(nil, nil) },
 		"restart": func() error { return runDaemonRestart(nil, nil) },
 	}
@@ -25,11 +26,12 @@ func TestDaemonStartAndRestartPreflightSocketPathBeforeFilesystemSideEffects(t *
 			root := t.TempDir()
 			socketDir := filepath.Join(root, strings.Repeat("d", 160))
 			socketPath := filepath.Join(socketDir, "client.sock")
+			stateDir := filepath.Join(root, "state")
 			cfg := clientconfig.Config{
 				Gateway: clientconfig.GatewayConfig{BaseURL: "http://127.0.0.1:8080"},
 				Daemon: clientconfig.DaemonConfig{
 					SocketPath: socketPath,
-					StatePath:  filepath.Join(root, "roots.json"),
+					StatePath:  filepath.Join(stateDir, "roots.json"),
 				},
 			}
 			data, err := json.Marshal(cfg)
@@ -48,6 +50,9 @@ func TestDaemonStartAndRestartPreflightSocketPathBeforeFilesystemSideEffects(t *
 			}
 			if _, statErr := os.Stat(socketDir); !os.IsNotExist(statErr) {
 				t.Fatalf("daemon %s created socket directory before preflight: %v", name, statErr)
+			}
+			if _, statErr := os.Stat(stateDir); !os.IsNotExist(statErr) {
+				t.Fatalf("daemon %s created trust-store state before preflight: %v", name, statErr)
 			}
 		})
 	}

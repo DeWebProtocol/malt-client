@@ -108,6 +108,9 @@ func runDaemonServe(*cobra.Command, []string) error {
 	if err != nil {
 		return err
 	}
+	if err := clientdaemon.ValidateSocketPath(cfg.Daemon.SocketPath); err != nil {
+		return err
+	}
 	store, err := truststore.Open(cfg.Daemon.StatePath)
 	if err != nil {
 		return err
