@@ -66,6 +66,9 @@ var daemonStatusCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		if err := clientdaemon.ValidateSocketPath(cfg.Daemon.SocketPath); err != nil {
+			return err
+		}
 		if err := checkDaemon(cfg.Daemon.SocketPath); err != nil {
 			return err
 		}

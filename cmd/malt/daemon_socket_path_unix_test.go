@@ -22,6 +22,7 @@ func TestDaemonLifecycleCommandsPreflightSocketPathBeforeFilesystemSideEffects(t
 	}{
 		"serve":   {run: func() error { return runDaemonServe(nil, nil) }},
 		"start":   {run: func() error { return runDaemonStart(nil, nil) }},
+		"status":  {run: func() error { return daemonStatusCmd.RunE(nil, nil) }},
 		"stop":    {run: func() error { return daemonStopCmd.RunE(nil, nil) }, precreateSocketDir: true},
 		"restart": {run: func() error { return runDaemonRestart(nil, nil) }},
 	}

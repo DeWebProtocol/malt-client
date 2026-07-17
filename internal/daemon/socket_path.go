@@ -11,6 +11,9 @@ func ValidateSocketPath(path string) error {
 	if strings.TrimSpace(path) == "" {
 		return fmt.Errorf("daemon socket path is empty")
 	}
+	if strings.IndexByte(path, 0) >= 0 {
+		return fmt.Errorf("daemon socket path contains a NUL byte: configure daemon.socket_path without NUL bytes")
+	}
 	return validateSocketPath(path)
 }
 

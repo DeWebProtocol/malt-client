@@ -14,3 +14,10 @@ func TestValidateSocketPathLength(t *testing.T) {
 		t.Fatalf("long socket path error = %v", err)
 	}
 }
+
+func TestValidateSocketPathRejectsNUL(t *testing.T) {
+	err := ValidateSocketPath("/tmp/client\x00.sock")
+	if err == nil || !strings.Contains(err.Error(), "NUL") || !strings.Contains(err.Error(), "daemon.socket_path") {
+		t.Fatalf("NUL socket path error = %v, want actionable daemon.socket_path error", err)
+	}
+}
