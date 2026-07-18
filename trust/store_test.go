@@ -87,6 +87,30 @@ func TestCIDRepresentationsAreCanonicalizedAcrossTrustWorkflow(t *testing.T) {
 	}
 }
 
+func TestTrustEquivalentRootPreservesDistinctPreviousRoot(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "roots.json")
+	store, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Trust("docs", testRoot, "unixfs", "first.example", "initial"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Trust("docs", candidateRoot, "unixfs", "second.example", "advance"); err != nil {
+		t.Fatal(err)
+	}
+	record, err := store.Trust("docs", alternateCIDString(t, candidateRoot), "updated", "third.example", "refresh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.AcceptedRoot != candidateRoot || record.PreviousRoot != testRoot {
+		t.Fatalf("equivalent re-trust changed root history: %#v", record)
+	}
+	if record.Profile != "updated" || record.Gateway != "third.example" || record.Source != "refresh" {
+		t.Fatalf("equivalent re-trust did not refresh metadata: %#v", record)
+	}
+}
+
 func TestOpenCanonicalizesPersistedCIDRepresentationsAndDuplicates(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "roots.json")
 	persisted := state{Version: 1, Roots: map[string]Record{
@@ -159,6 +183,30 @@ func TestOpenDropsPersistedCandidateEquivalentToAcceptedRoot(t *testing.T) {
 	}
 	if after.AcceptedRoot != testRoot || after.PreviousRoot != secondCandidateRoot {
 		t.Fatalf("rejected self-acceptance changed roots: %#v", after)
+	}
+}
+
+func TestOpenDropsPreviousRootEquivalentToAcceptedRoot(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "roots.json")
+	persisted := state{Version: 1, Roots: map[string]Record{
+		"docs": {
+			Alias:        "docs",
+			AcceptedRoot: alternateCIDString(t, testRoot),
+			PreviousRoot: testRoot,
+		},
+	}}
+	writeTestState(t, path, persisted)
+
+	store, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := store.Get("docs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.AcceptedRoot != testRoot || record.PreviousRoot != "" {
+		t.Fatalf("canonical reload retained a self previous root: %#v", record)
 	}
 }
 

@@ -107,11 +107,12 @@ func (s *Store) Trust(alias, root, profile, gateway, source string) (Record, err
 	}
 	defer func() { _ = unlock() }()
 	record := s.state.Roots[alias]
-	previous := record.AcceptedRoot
 	record.Alias = alias
 	record.Profile = profile
 	record.Gateway = gateway
-	record.PreviousRoot = previous
+	if record.AcceptedRoot != "" && record.AcceptedRoot != canonicalRoot {
+		record.PreviousRoot = record.AcceptedRoot
+	}
 	record.AcceptedRoot = canonicalRoot
 	record.Source = source
 	record.AcceptedAt = time.Now().UTC()
@@ -264,6 +265,9 @@ func (s *Store) reloadLocked() error {
 		}
 		if record.PreviousRoot, err = canonicalOptionalCID(record.PreviousRoot); err != nil {
 			return fmt.Errorf("trusted-root alias %q has invalid previous root: %w", alias, err)
+		}
+		if record.PreviousRoot == record.AcceptedRoot {
+			record.PreviousRoot = ""
 		}
 		candidates := make([]Candidate, 0, len(record.Candidates))
 		for i, candidate := range record.Candidates {
