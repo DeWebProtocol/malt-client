@@ -275,6 +275,9 @@ func (s *Store) reloadLocked() error {
 			if err != nil {
 				return fmt.Errorf("trusted-root alias %q candidate %d has invalid base root: %w", alias, i, err)
 			}
+			if candidate.Root == record.AcceptedRoot {
+				continue
+			}
 			candidates = append(removeCandidate(candidates, candidate.Root), candidate)
 		}
 		record.Candidates = candidates

@@ -121,6 +121,47 @@ func TestOpenCanonicalizesPersistedCIDRepresentationsAndDuplicates(t *testing.T)
 	}
 }
 
+func TestOpenDropsPersistedCandidateEquivalentToAcceptedRoot(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "roots.json")
+	persisted := state{Version: 1, Roots: map[string]Record{
+		"docs": {
+			Alias:        "docs",
+			AcceptedRoot: alternateCIDString(t, testRoot),
+			PreviousRoot: alternateCIDString(t, secondCandidateRoot),
+			Candidates: []Candidate{
+				{Root: testRoot, BaseRoot: alternateCIDString(t, testRoot), Source: "legacy-self"},
+				{Root: alternateCIDString(t, candidateRoot), BaseRoot: testRoot, Source: "real-candidate"},
+			},
+		},
+	}}
+	writeTestState(t, path, persisted)
+
+	store, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := store.Get("docs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.AcceptedRoot != testRoot || record.PreviousRoot != secondCandidateRoot {
+		t.Fatalf("canonical persisted record = %#v", record)
+	}
+	if len(record.Candidates) != 1 || record.Candidates[0].Root != candidateRoot || record.Candidates[0].Source != "real-candidate" {
+		t.Fatalf("persisted candidates after self-candidate migration = %#v", record.Candidates)
+	}
+	if _, err := store.AcceptCandidate("docs", alternateCIDString(t, testRoot), "manual"); !errors.Is(err, ErrCandidateNotFound) {
+		t.Fatalf("accept equivalent-to-current candidate error = %v, want ErrCandidateNotFound", err)
+	}
+	after, err := store.Get("docs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.AcceptedRoot != testRoot || after.PreviousRoot != secondCandidateRoot {
+		t.Fatalf("rejected self-acceptance changed roots: %#v", after)
+	}
+}
+
 func TestOpenRejectsMalformedPersistedCID(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "roots.json")
 	writeTestState(t, path, state{Version: 1, Roots: map[string]Record{
