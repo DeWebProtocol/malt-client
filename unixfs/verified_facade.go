@@ -453,14 +453,20 @@ func (r *verifiedReader) verifiedListRead(ctx context.Context, root cid.Cid, sta
 
 func (r *verifiedReader) assembleRange(ctx context.Context, read protocol.ReadResult, start, end, chunkSize uint64) ([]byte, error) {
 	assembled := make([]byte, 0)
+	blocks := make(map[string][]byte, len(read.RangeSegments))
 	for i, raw := range read.RangeSegments {
 		segment, err := cid.Parse(raw)
 		if err != nil {
 			return nil, fmt.Errorf("decode authenticated range segment %d: %w", i, err)
 		}
-		data, err := r.getBoundBlock(ctx, segment)
-		if err != nil {
-			return nil, fmt.Errorf("fetch authenticated range segment %d: %w", i, err)
+		key := segment.KeyString()
+		data, ok := blocks[key]
+		if !ok {
+			data, err = r.getBoundBlock(ctx, segment)
+			if err != nil {
+				return nil, fmt.Errorf("fetch authenticated range segment %d: %w", i, err)
+			}
+			blocks[key] = data
 		}
 		assembled = append(assembled, data...)
 	}
@@ -471,7 +477,11 @@ func (r *verifiedReader) assembleRange(ctx context.Context, read protocol.ReadRe
 	}
 	body := append([]byte(nil), assembled[offset:offset+length]...)
 	if err := VerifyRangeBody(read.ProofList, body, start, end, func(key cid.Cid) ([]byte, error) {
-		return r.getBoundBlock(ctx, key)
+		data, ok := blocks[key.KeyString()]
+		if !ok {
+			return nil, fmt.Errorf("authenticated proof segment %s is absent from the verified range response", key)
+		}
+		return data, nil
 	}); err != nil {
 		return nil, fmt.Errorf("bind list range body: %w", err)
 	}
@@ -504,7 +514,7 @@ func (w *verifiedWriter) EmptyDirectory(ctx context.Context) (*WriteResult, erro
 // AddDirectory ensures that rawPath is a directory below trustedRoot. Existing
 // files on the path are rejected instead of silently replaced.
 func (w *verifiedWriter) AddDirectory(ctx context.Context, trustedRoot cid.Cid, rawPath string) (*WriteResult, error) {
-	segments, err := unixfsmodel.ParsePath(rawPath)
+	segments, err := ParseCanonicalStagedPath(rawPath)
 	if err != nil {
 		return nil, err
 	}
@@ -532,6 +542,13 @@ func (w *verifiedWriter) AddFile(ctx context.Context, trustedRoot cid.Cid, rawPa
 func (w *verifiedWriter) AddFileStream(ctx context.Context, trustedRoot cid.Cid, rawPath string, src io.Reader) (*WriteResult, error) {
 	if src == nil {
 		return nil, fmt.Errorf("unixfs file stream is nil")
+	}
+	segments, err := ParseCanonicalStagedPath(rawPath)
+	if err != nil {
+		return nil, err
+	}
+	if len(segments) == 0 {
+		return nil, fmt.Errorf("unixfs file path is empty")
 	}
 	staged, err := os.CreateTemp(w.tempDir, "malt-client-unixfs-*")
 	if err != nil {
@@ -563,7 +580,7 @@ func (w *verifiedWriter) AddFileSized(ctx context.Context, trustedRoot cid.Cid, 
 	if size == math.MaxInt64 {
 		return nil, fmt.Errorf("unixfs file size exceeds supported stream limit")
 	}
-	segments, err := unixfsmodel.ParsePath(rawPath)
+	segments, err := ParseCanonicalStagedPath(rawPath)
 	if err != nil {
 		return nil, err
 	}
@@ -656,7 +673,7 @@ func requireFilePath(root *StagedNode, segments []string) error {
 }
 
 func (w *verifiedWriter) RemovePath(ctx context.Context, trustedRoot cid.Cid, rawPath string) (*RemoveResult, error) {
-	segments, err := unixfsmodel.ParsePath(rawPath)
+	segments, err := ParseCanonicalStagedPath(rawPath)
 	if err != nil {
 		return nil, err
 	}

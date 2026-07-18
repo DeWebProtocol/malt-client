@@ -27,6 +27,26 @@ type StagedNode struct {
 	Changed     bool
 }
 
+// ParseCanonicalStagedPath applies the UnixFS application path policy and
+// rejects any spelling that CanonicalStagedPath would change. Callers that
+// mutate staged trees use this lossless form so distinct input names cannot
+// collapse into the same child binding.
+func ParseCanonicalStagedPath(raw string) ([]string, error) {
+	segments, err := unixfsmodel.ParsePath(raw)
+	if err != nil {
+		return nil, err
+	}
+	for _, segment := range segments {
+		if strings.TrimSpace(segment) != segment {
+			return nil, fmt.Errorf("%w: path segment is not losslessly canonical: %q", unixfsmodel.ErrInvalidPath, segment)
+		}
+	}
+	if strings.Join(segments, "/") != raw || CanonicalStagedPath(raw) != raw {
+		return nil, fmt.Errorf("%w: path is not in losslessly canonical staging form: %q", unixfsmodel.ErrInvalidPath, raw)
+	}
+	return segments, nil
+}
+
 // NewStagedDirectory creates an empty staged directory node.
 func NewStagedDirectory() *StagedNode {
 	return &StagedNode{
@@ -64,14 +84,14 @@ func EnsureStagedDirectory(root *StagedNode, p string) *StagedNode {
 
 // SetStagedFile sets p to a file node pointing at key.
 func SetStagedFile(root *StagedNode, p string, key cid.Cid) error {
-	segments := SplitStagedPath(p)
+	segments, err := ParseCanonicalStagedPath(p)
+	if err != nil {
+		return err
+	}
 	if len(segments) == 0 {
 		return fmt.Errorf("file path must not be empty")
 	}
-	parentPath := path.Dir(p)
-	if parentPath == "." {
-		parentPath = ""
-	}
+	parentPath := strings.Join(segments[:len(segments)-1], "/")
 	parent := EnsureStagedDirectory(root, parentPath)
 	name := segments[len(segments)-1]
 
@@ -114,14 +134,14 @@ func EnsureStagedFile(root *StagedNode, p string) *StagedNode {
 
 // SetStagedMapDirectory sets p to an already-materialized map directory root.
 func SetStagedMapDirectory(root *StagedNode, p string, key cid.Cid) error {
-	segments := SplitStagedPath(p)
+	segments, err := ParseCanonicalStagedPath(p)
+	if err != nil {
+		return err
+	}
 	if len(segments) == 0 {
 		return fmt.Errorf("map directory path must not be empty")
 	}
-	parentPath := path.Dir(p)
-	if parentPath == "." {
-		parentPath = ""
-	}
+	parentPath := strings.Join(segments[:len(segments)-1], "/")
 	parent := EnsureStagedDirectory(root, parentPath)
 	name := segments[len(segments)-1]
 	parent.Children[name] = &StagedNode{

@@ -4,12 +4,15 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/dewebprotocol/malt-client/application"
 	casmemory "github.com/dewebprotocol/malt-client/internal/cas/memory"
 	"github.com/dewebprotocol/malt-client/trust"
 	unixfs "github.com/dewebprotocol/malt-client/unixfs"
+	"github.com/dewebprotocol/malt/mutation"
+	"github.com/dewebprotocol/malt/protocol"
 	"github.com/dewebprotocol/malt/wire/maltcid"
 	cid "github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
@@ -129,6 +132,219 @@ func TestMountInputsKeepsApplicationPathPolicyOutOfCLI(t *testing.T) {
 	}
 	if mounted[0].MountBase != "repo/bundle/a.txt" || mounted[1].MountBase != "repo/bundle/b.txt" {
 		t.Fatalf("mounted paths = %q, %q", mounted[0].MountBase, mounted[1].MountBase)
+	}
+	single, err := mountAddInputs(inputs[:1], Options{Wrap: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if single[0].MountBase != "a.txt/a.txt" {
+		t.Fatalf("empty wrap name no longer used the existing single-input default: %q", single[0].MountBase)
+	}
+}
+
+func TestMountInputsRejectsReservedAndNonPortableTargets(t *testing.T) {
+	root := t.TempDir()
+	reserved := filepath.Join(root, "@payload")
+	regular := filepath.Join(root, "file.txt")
+	writeTestFile(t, reserved, "reserved")
+	writeTestFile(t, regular, "regular")
+
+	reservedInputs, err := collectAddInputs([]string{reserved})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mountAddInputs(reservedInputs, Options{}); err == nil {
+		t.Fatal("mounted reserved @payload input")
+	}
+	regularInputs, err := collectAddInputs([]string{regular})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, opts := range map[string]Options{
+		"parent prefix":      {Prefix: "../escape"},
+		"backslash prefix":   {Prefix: `repo\nested`},
+		"reserved prefix":    {Prefix: "repo/@payload"},
+		"multi-segment wrap": {Wrap: true, WrapName: "bundle/nested"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := mountAddInputs(regularInputs, opts); err == nil {
+				t.Fatalf("mountAddInputs accepted options %#v", opts)
+			}
+		})
+	}
+}
+
+func TestValidateStagedPathRejectsLossyWhitespaceCanonicalization(t *testing.T) {
+	for _, target := range []string{" file", "file ", "   ", " @payload", "dir/ child", "dir/child "} {
+		t.Run(target, func(t *testing.T) {
+			if err := validateStagedPath(target); err == nil {
+				t.Fatalf("validateStagedPath accepted lossy path %q", target)
+			}
+		})
+	}
+	for _, target := range []string{"file", "file name", "dir/file name"} {
+		if err := validateStagedPath(target); err != nil {
+			t.Fatalf("validateStagedPath rejected canonical path %q: %v", target, err)
+		}
+	}
+}
+
+func TestBuildAddStagingTreeRejectsNonEmptyLossyPrefixAndWrapBeforeWrite(t *testing.T) {
+	input := filepath.Join(t.TempDir(), "file.txt")
+	writeTestFile(t, input, "payload")
+	for name, opts := range map[string]Options{
+		"whitespace prefix":          {Prefix: "   "},
+		"padded prefix":              {Prefix: " repo "},
+		"separator-only prefix":      {Prefix: "///"},
+		"whitespace prefix segment":  {Prefix: "repo/ child"},
+		"internal prefix whitespace": {Prefix: "repo name"},
+		"whitespace-only segment":    {Prefix: "repo/ /child"},
+		"whitespace wrap":            {Wrap: true, WrapName: "   "},
+		"padded wrap":                {Wrap: true, WrapName: " bundle "},
+	} {
+		t.Run(name, func(t *testing.T) {
+			blocks := &countingAddCAS{inner: casmemory.New()}
+			remote := &countingAddGateway{}
+			if _, err := buildAddStagingTree(t.Context(), blocks, remote, []string{input}, opts); err == nil {
+				t.Fatalf("buildAddStagingTree accepted options %#v", opts)
+			}
+			if blocks.puts != 0 || remote.calls != 0 {
+				t.Fatalf("invalid options performed writes: CAS=%d Gateway=%d", blocks.puts, remote.calls)
+			}
+		})
+	}
+}
+
+func TestBuildAddStagingTreeRejectsWhitespaceNameCollisionBeforeWrite(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "repo")
+	writeTestFile(t, filepath.Join(root, "file"), "canonical")
+	writeTestFile(t, filepath.Join(root, "file "), "would collide after trimming")
+	blocks := &countingAddCAS{inner: casmemory.New()}
+	remote := &countingAddGateway{}
+	if _, err := buildAddStagingTree(t.Context(), blocks, remote, []string{root}, Options{}); err == nil {
+		t.Fatal("buildAddStagingTree accepted lossy whitespace filenames")
+	}
+	if blocks.puts != 0 || remote.calls != 0 {
+		t.Fatalf("invalid tree performed writes: CAS=%d Gateway=%d", blocks.puts, remote.calls)
+	}
+}
+
+func TestBuildAddStagingTreeRejectsWhitespacePrefixedReservedNameBeforeWrite(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "repo")
+	writeTestFile(t, filepath.Join(root, " @payload"), "would become reserved after trimming")
+	blocks := &countingAddCAS{inner: casmemory.New()}
+	remote := &countingAddGateway{}
+	if _, err := buildAddStagingTree(t.Context(), blocks, remote, []string{root}, Options{}); err == nil {
+		t.Fatal("buildAddStagingTree accepted whitespace-prefixed @payload")
+	}
+	if blocks.puts != 0 || remote.calls != 0 {
+		t.Fatalf("invalid tree performed writes: CAS=%d Gateway=%d", blocks.puts, remote.calls)
+	}
+}
+
+func TestStageSingleFileRejectsReservedTargetBeforeUpload(t *testing.T) {
+	local := filepath.Join(t.TempDir(), "payload.txt")
+	writeTestFile(t, local, "payload")
+	blocks := &countingAddCAS{inner: casmemory.New()}
+	if _, _, err := stageSingleFile(t.Context(), unixfs.NewStagedDirectory(), blocks, nil, local, "@payload"); err == nil {
+		t.Fatal("stageSingleFile accepted reserved target")
+	}
+	if blocks.puts != 0 {
+		t.Fatalf("invalid target uploaded %d blocks", blocks.puts)
+	}
+}
+
+func TestBuildAddStagingTreeRejectsPOSIXBackslashName(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows cannot create a file with a backslash in one path segment")
+	}
+	root := filepath.Join(t.TempDir(), "repo")
+	writeTestFile(t, filepath.Join(root, `a\b`), "backslash")
+	writeTestFile(t, filepath.Join(root, "a", "b"), "nested")
+	blocks := &countingAddCAS{inner: casmemory.New()}
+	if _, err := buildAddStagingTree(t.Context(), blocks, nil, []string{root}, Options{}); err == nil {
+		t.Fatal("buildAddStagingTree rewrote a POSIX backslash filename")
+	}
+	if blocks.puts != 0 {
+		t.Fatalf("invalid tree uploaded %d blocks", blocks.puts)
+	}
+}
+
+func TestBuildAddStagingTreePreflightsWholeTreeBeforeWrite(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows cannot create a file with a backslash in one path segment")
+	}
+	root := filepath.Join(t.TempDir(), "repo")
+	writeTestFile(t, filepath.Join(root, "a-large.bin"), string(make([]byte, addFixedChunkSize+1)))
+	writeTestFile(t, filepath.Join(root, `z\bad`), "invalid later entry")
+	blocks := &countingAddCAS{inner: casmemory.New()}
+	remote := &countingAddGateway{}
+	if _, err := buildAddStagingTree(t.Context(), blocks, remote, []string{root}, Options{}); err == nil {
+		t.Fatal("buildAddStagingTree accepted invalid later entry")
+	}
+	if blocks.puts != 0 || remote.calls != 0 {
+		t.Fatalf("preflight allowed writes before later validation failure: CAS=%d Gateway=%d", blocks.puts, remote.calls)
+	}
+}
+
+func TestBuildAddStagingTreePreflightPreservesIgnoreSemantics(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows cannot create a file with a backslash in one path segment")
+	}
+	root := filepath.Join(t.TempDir(), "repo")
+	writeTestFile(t, filepath.Join(root, ".gitignore"), "ignored/\n")
+	writeTestFile(t, filepath.Join(root, "keep.txt"), "keep")
+	writeTestFile(t, filepath.Join(root, "ignored", `z\bad`), "ignored invalid name")
+	blocks := &countingAddCAS{inner: casmemory.New()}
+	result, err := buildAddStagingTree(t.Context(), blocks, nil, []string{root}, Options{})
+	if err != nil {
+		t.Fatalf("ignored invalid path changed staging semantics: %v", err)
+	}
+	if result.Files != 2 {
+		t.Fatalf("staged files = %d, want .gitignore and keep.txt", result.Files)
+	}
+}
+
+func TestBuildAddStagingTreePreflightsSymlinkDirectoryBeforeWrite(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("directory symlink setup is not portable to Windows")
+	}
+	target := filepath.Join(t.TempDir(), "target")
+	writeTestFile(t, filepath.Join(target, "a-large.bin"), string(make([]byte, addFixedChunkSize+1)))
+	writeTestFile(t, filepath.Join(target, `z\bad`), "invalid later entry")
+	root := filepath.Join(t.TempDir(), "repo")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(root, "linked")); err != nil {
+		t.Skipf("directory symlinks are unavailable: %v", err)
+	}
+	blocks := &countingAddCAS{inner: casmemory.New()}
+	remote := &countingAddGateway{}
+	if _, err := buildAddStagingTree(t.Context(), blocks, remote, []string{root}, Options{}); err == nil {
+		t.Fatal("buildAddStagingTree accepted invalid entry inside symlink directory")
+	}
+	if blocks.puts != 0 || remote.calls != 0 {
+		t.Fatalf("symlink preflight allowed writes before validation failure: CAS=%d Gateway=%d", blocks.puts, remote.calls)
+	}
+}
+
+func TestBuildAddStagingTreePreflightsSymlinkCycleBeforeWrite(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("directory symlink setup is not portable to Windows")
+	}
+	root := filepath.Join(t.TempDir(), "repo")
+	writeTestFile(t, filepath.Join(root, "a-large.bin"), string(make([]byte, addFixedChunkSize+1)))
+	if err := os.Symlink(root, filepath.Join(root, "loop")); err != nil {
+		t.Skipf("directory symlinks are unavailable: %v", err)
+	}
+	blocks := &countingAddCAS{inner: casmemory.New()}
+	remote := &countingAddGateway{}
+	if _, err := buildAddStagingTree(t.Context(), blocks, remote, []string{root}, Options{}); err == nil {
+		t.Fatal("buildAddStagingTree accepted a symlink cycle")
+	}
+	if blocks.puts != 0 || remote.calls != 0 {
+		t.Fatalf("cycle preflight allowed writes: CAS=%d Gateway=%d", blocks.puts, remote.calls)
 	}
 }
 
@@ -254,4 +470,52 @@ func testCID(t *testing.T, body string) cid.Cid {
 		t.Fatal(err)
 	}
 	return cid.NewCidV1(cid.Raw, hash)
+}
+
+type countingAddCAS struct {
+	inner *casmemory.Store
+	puts  int
+}
+
+type countingAddGateway struct {
+	calls int
+}
+
+func (g *countingAddGateway) Resolve(context.Context, protocol.ResolveRequest) (*protocol.ResolveResult, error) {
+	g.calls++
+	return nil, os.ErrInvalid
+}
+
+func (g *countingAddGateway) Read(context.Context, protocol.ReadRequest) (*protocol.ReadResult, error) {
+	g.calls++
+	return nil, os.ErrInvalid
+}
+
+func (g *countingAddGateway) CreateStagedRoot(context.Context, map[string]string) (cid.Cid, error) {
+	g.calls++
+	return cid.Undef, os.ErrInvalid
+}
+
+func (g *countingAddGateway) CreateFixedListBaseRoot(context.Context) (cid.Cid, error) {
+	g.calls++
+	return cid.Undef, os.ErrInvalid
+}
+
+func (g *countingAddGateway) ApplyFixedListPayloadMutation(context.Context, mutation.SemanticMutation) (cid.Cid, error) {
+	g.calls++
+	return cid.Undef, os.ErrInvalid
+}
+
+func (c *countingAddCAS) Put(ctx context.Context, data []byte) (cid.Cid, error) {
+	c.puts++
+	return c.inner.Put(ctx, data)
+}
+
+func (c *countingAddCAS) PutWithCodec(ctx context.Context, data []byte, codec uint64) (cid.Cid, error) {
+	c.puts++
+	return c.inner.PutWithCodec(ctx, data, codec)
+}
+
+func (c *countingAddCAS) Get(ctx context.Context, key cid.Cid) ([]byte, error) {
+	return c.inner.Get(ctx, key)
 }

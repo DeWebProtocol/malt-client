@@ -61,6 +61,13 @@ func MaterializeStagedDirectory(ctx context.Context, roots StagedRootCreator, bl
 
 	names := make([]string, 0, len(node.Children))
 	for name := range node.Children {
+		segments, err := ParseCanonicalStagedPath(name)
+		if err != nil || len(segments) != 1 || segments[0] != name {
+			if err == nil {
+				err = fmt.Errorf("child name must be one losslessly canonical portable path segment")
+			}
+			return nil, fmt.Errorf("invalid staged directory child %q: %w", name, err)
+		}
 		names = append(names, name)
 	}
 	slices.Sort(names)

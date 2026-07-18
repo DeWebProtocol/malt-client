@@ -26,6 +26,60 @@ type realRemote struct {
 	reads  []protocol.ReadRequest
 }
 
+type countingWriterRemote struct {
+	inner         *realRemote
+	remoteCalls   int
+	blockCalls    int
+	rootCalls     int
+	mutationCalls int
+}
+
+func (r *countingWriterRemote) Resolve(ctx context.Context, request protocol.ResolveRequest) (*protocol.ResolveResult, error) {
+	r.remoteCalls++
+	return r.inner.Resolve(ctx, request)
+}
+
+func (r *countingWriterRemote) Read(ctx context.Context, request protocol.ReadRequest) (*protocol.ReadResult, error) {
+	r.remoteCalls++
+	return r.inner.Read(ctx, request)
+}
+
+func (r *countingWriterRemote) Get(ctx context.Context, key cid.Cid) ([]byte, error) {
+	r.blockCalls++
+	return r.inner.Get(ctx, key)
+}
+
+func (r *countingWriterRemote) Put(ctx context.Context, data []byte) (cid.Cid, error) {
+	r.blockCalls++
+	return r.inner.Put(ctx, data)
+}
+
+func (r *countingWriterRemote) CreateStagedRoot(ctx context.Context, bindings map[string]string) (cid.Cid, error) {
+	r.rootCalls++
+	return r.inner.CreateStagedRoot(ctx, bindings)
+}
+
+func (r *countingWriterRemote) CreateFixedListBaseRoot(ctx context.Context) (cid.Cid, error) {
+	r.mutationCalls++
+	return r.inner.CreateFixedListBaseRoot(ctx)
+}
+
+func (r *countingWriterRemote) ApplyFixedListPayloadMutation(ctx context.Context, value mutation.SemanticMutation) (cid.Cid, error) {
+	r.mutationCalls++
+	return r.inner.ApplyFixedListPayloadMutation(ctx, value)
+}
+
+func (r *countingWriterRemote) reset() {
+	r.remoteCalls = 0
+	r.blockCalls = 0
+	r.rootCalls = 0
+	r.mutationCalls = 0
+}
+
+func (r *countingWriterRemote) calls() int {
+	return r.remoteCalls + r.blockCalls + r.rootCalls + r.mutationCalls
+}
+
 func newRealRemote(t *testing.T) *realRemote {
 	t.Helper()
 	const scope = "verified-unixfs-test"
@@ -192,6 +246,65 @@ func TestVerifiedReaderBindsDirectoryRawAndLargeListPayloads(t *testing.T) {
 	}
 }
 
+func TestVerifiedReaderFetchesEachAuthenticatedRangeBlockOnce(t *testing.T) {
+	remote := newRealRemote(t)
+	chunk := []byte("0123456789abcdef")
+	body := bytes.Repeat(chunk, 8)
+	root := materializeTree(t, remote, map[string][]byte{"repeated.bin": body}, len(chunk))
+	blocks := &countingBlocks{inner: remote, gets: make(map[string]int)}
+	reader, err := unixfs.NewReader(unixfs.ReaderOptions{Remote: remote, Blocks: blocks})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := reader.ReadFileRange(t.Context(), root, "repeated.bin", 0, uint64(len(body)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(result.Body, body) {
+		t.Fatal("verified repeated-chunk body differs")
+	}
+	if result.Read == nil || len(result.Read.RangeSegments) < 2 {
+		t.Fatalf("range fixture did not produce multiple segments: %#v", result.Read)
+	}
+	unique := make(map[string]struct{})
+	for _, raw := range result.Read.RangeSegments {
+		unique[raw] = struct{}{}
+	}
+	if len(unique) >= len(result.Read.RangeSegments) {
+		t.Fatalf("range fixture did not reuse a chunk CID: %v", result.Read.RangeSegments)
+	}
+	for raw := range unique {
+		key, err := cid.Parse(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := blocks.gets[key.KeyString()]; got != 1 {
+			t.Fatalf("authenticated range block %s fetched %d times, want 1", key, got)
+		}
+	}
+}
+
+func TestMaterializeStagedDirectoryRejectsNonCanonicalChild(t *testing.T) {
+	payload, err := cid.Parse("bafkqaaa")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"@payload", " @payload", " file", "file ", "   "} {
+		t.Run(name, func(t *testing.T) {
+			remote := newRealRemote(t)
+			root := unixfs.NewStagedDirectory()
+			root.Children[name] = &unixfs.StagedNode{
+				Kind: unixfs.StagedKindFile,
+				Key:  payload,
+			}
+			if _, err := unixfs.MaterializeStagedDirectory(t.Context(), remote, remote, root); err == nil {
+				t.Fatalf("MaterializeStagedDirectory accepted non-canonical child %q", name)
+			}
+		})
+	}
+}
+
 func TestVerifiedReaderRejectsAuthenticatedUnknownTargetCodec(t *testing.T) {
 	remote := newRealRemote(t)
 	digest, err := mh.Sum([]byte("not a commitment"), mh.SHA2_256, -1)
@@ -233,6 +346,16 @@ func (r tamperedRemote) Resolve(ctx context.Context, request protocol.ResolveReq
 type corruptBlocks struct{ inner *realRemote }
 
 func (b corruptBlocks) Get(context.Context, cid.Cid) ([]byte, error) { return []byte("corrupt"), nil }
+
+type countingBlocks struct {
+	inner *realRemote
+	gets  map[string]int
+}
+
+func (b *countingBlocks) Get(ctx context.Context, key cid.Cid) ([]byte, error) {
+	b.gets[key.KeyString()]++
+	return b.inner.Get(ctx, key)
+}
 
 type splicedReadRemote struct {
 	*realRemote
@@ -389,6 +512,49 @@ func TestVerifiedWriterRejectsMismatchedStreamSizeAndDirectoryReplacement(t *tes
 	}
 }
 
+func TestVerifiedWriterRejectsNonCanonicalPathsBeforeAnyIO(t *testing.T) {
+	remote := newRealRemote(t)
+	root := materializeTree(t, remote, map[string][]byte{"file": []byte("payload")}, 32)
+	counting := &countingWriterRemote{inner: remote}
+	writer, err := unixfs.NewWriter(unixfs.WriterOptions{Remote: counting, Blocks: counting, Roots: counting, Lists: counting, ChunkSize: 32})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name string
+		run  func() error
+	}{
+		{name: "file collision after trimming", run: func() error {
+			_, err := writer.AddFile(t.Context(), root, " file ", []byte("replacement"))
+			return err
+		}},
+		{name: "directory trailing space", run: func() error {
+			_, err := writer.AddDirectory(t.Context(), root, "dir ")
+			return err
+		}},
+		{name: "streamed file leading space", run: func() error {
+			_, err := writer.AddFileStream(t.Context(), root, " file", bytes.NewReader([]byte("replacement")))
+			return err
+		}},
+		{name: "remove trailing space", run: func() error {
+			_, err := writer.RemovePath(t.Context(), root, "file ")
+			return err
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			counting.reset()
+			if err := test.run(); err == nil {
+				t.Fatal("writer accepted a non-canonical path")
+			}
+			if got := counting.calls(); got != 0 {
+				t.Fatalf("non-canonical path performed I/O: remote=%d block=%d root=%d mutation=%d", counting.remoteCalls, counting.blockCalls, counting.rootCalls, counting.mutationCalls)
+			}
+		})
+	}
+}
+
 func keptBody(result *unixfs.ReadResult) []byte {
 	if result == nil {
 		return nil
@@ -400,3 +566,7 @@ var _ unixfs.Remote = (*realRemote)(nil)
 var _ unixfs.BlockStore = (*realRemote)(nil)
 var _ unixfs.StagedRootCreator = (*realRemote)(nil)
 var _ unixfs.FixedListPayloadWriter = (*realRemote)(nil)
+var _ unixfs.Remote = (*countingWriterRemote)(nil)
+var _ unixfs.BlockStore = (*countingWriterRemote)(nil)
+var _ unixfs.StagedRootCreator = (*countingWriterRemote)(nil)
+var _ unixfs.FixedListPayloadWriter = (*countingWriterRemote)(nil)

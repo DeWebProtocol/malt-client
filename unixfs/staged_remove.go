@@ -1,10 +1,6 @@
 package unixfs
 
-import (
-	"fmt"
-
-	unixfsmodel "github.com/dewebprotocol/malt-client/unixfs/model"
-)
+import "fmt"
 
 // RemoveStagedPath removes one existing entry from a staged UnixFS tree and
 // marks every ancestor for bottom-up rematerialization.
@@ -12,7 +8,7 @@ func RemoveStagedPath(root *StagedNode, rawPath string) error {
 	if root == nil || root.Kind != StagedKindDirectory {
 		return fmt.Errorf("staged root is not a directory")
 	}
-	segments, err := unixfsmodel.ParsePath(rawPath)
+	segments, err := ParseCanonicalStagedPath(rawPath)
 	if err != nil {
 		return err
 	}

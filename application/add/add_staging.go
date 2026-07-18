@@ -8,6 +8,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"unicode"
 
 	"github.com/dewebprotocol/malt-client/unixfs"
 	cid "github.com/ipfs/go-cid"
@@ -37,6 +38,79 @@ type addBuildResult struct {
 	ArcSets          int
 	Arcs             int
 	SymlinkRoots     int
+}
+
+func validateStagedSegment(segment string) error {
+	segments, err := unixfs.ParseCanonicalStagedPath(segment)
+	if err != nil {
+		return err
+	}
+	if len(segments) != 1 || segments[0] != segment {
+		return fmt.Errorf("invalid UnixFS path segment %q", segment)
+	}
+	return nil
+}
+
+func validateStagedPath(target string) error {
+	segments, err := unixfs.ParseCanonicalStagedPath(target)
+	if err != nil {
+		return err
+	}
+	if len(segments) == 0 {
+		return fmt.Errorf("target path must not be empty")
+	}
+	return nil
+}
+
+func canonicalAddPrefix(raw string) (string, error) {
+	if raw == "" {
+		return "", nil
+	}
+	segments := make([]string, 0)
+	for _, segment := range strings.Split(raw, "/") {
+		if segment == "" {
+			continue
+		}
+		if strings.IndexFunc(segment, unicode.IsSpace) >= 0 {
+			return "", fmt.Errorf("invalid add prefix %q: prefix segments must not contain whitespace", raw)
+		}
+		if err := validateStagedSegment(segment); err != nil {
+			return "", fmt.Errorf("invalid add prefix %q: %w", raw, err)
+		}
+		segments = append(segments, segment)
+	}
+	// Leading, trailing, and repeated slash separators are accepted CLI syntax,
+	// but every non-empty prefix segment must already be losslessly canonical.
+	prefix := strings.Join(segments, "/")
+	if prefix == "" {
+		return "", fmt.Errorf("invalid add prefix %q: prefix must contain a path segment", raw)
+	}
+	if err := validateStagedPath(prefix); err != nil {
+		return "", fmt.Errorf("invalid add prefix %q: %w", raw, err)
+	}
+	return prefix, nil
+}
+
+func appendStagedSegment(base, segment string) (string, error) {
+	if err := validateStagedSegment(segment); err != nil {
+		return "", err
+	}
+	return path.Join(base, segment), nil
+}
+
+func stagedPathFromRelative(base, relative string) (string, error) {
+	if relative == "." {
+		return base, nil
+	}
+	target := base
+	for _, segment := range strings.Split(filepath.ToSlash(relative), "/") {
+		var err error
+		target, err = appendStagedSegment(target, segment)
+		if err != nil {
+			return "", err
+		}
+	}
+	return target, nil
 }
 
 func materializeSymlinkDirectoryBoundary(ctx context.Context, remote Gateway, casClient addCASClient, localPath string, seen map[string]struct{}) (cid.Cid, int, int64, *addMaterializeResult, int, error) {
@@ -92,7 +166,10 @@ func stageHierarchicalDirectoryChildren(ctx context.Context, root *unixfs.Staged
 	var symlinkRoots int
 	for _, entry := range entries {
 		childLocal := filepath.Join(localDir, entry.Name())
-		childPath := unixfs.CanonicalStagedPath(path.Join(mountBase, entry.Name()))
+		childPath, err := appendStagedSegment(mountBase, entry.Name())
+		if err != nil {
+			return 0, 0, 0, nil, 0, fmt.Errorf("project local path %s into UnixFS: %w", childLocal, err)
+		}
 		if entry.Type()&fs.ModeSymlink != 0 {
 			info, err := os.Stat(childLocal)
 			if err != nil {
@@ -162,6 +239,9 @@ func buildAddStagingTree(ctx context.Context, casClient addCASClient, remote Gat
 	}
 	mounted, err := mountAddInputs(inputs, opts)
 	if err != nil {
+		return nil, err
+	}
+	if err := preflightMountedInputs(mounted, opts.Ignore); err != nil {
 		return nil, err
 	}
 
@@ -284,8 +364,11 @@ func collectAddInputs(rawInputs []string) ([]addInput, error) {
 }
 
 func mountAddInputs(inputs []addInput, opts addBuildOptions) ([]addMountedInput, error) {
-	prefix := unixfs.CanonicalStagedPath(opts.Prefix)
-	if opts.Wrap && len(inputs) > 1 && strings.TrimSpace(opts.WrapName) == "" {
+	prefix, err := canonicalAddPrefix(opts.Prefix)
+	if err != nil {
+		return nil, err
+	}
+	if opts.Wrap && len(inputs) > 1 && opts.WrapName == "" {
 		return nil, fmt.Errorf("--wrap-name is required when --wrap is used with multiple inputs")
 	}
 	if opts.Wrap && len(inputs) == 1 && inputs[0].Info.IsDir() {
@@ -295,20 +378,25 @@ func mountAddInputs(inputs []addInput, opts addBuildOptions) ([]addMountedInput,
 	seen := make(map[string]struct{})
 	out := make([]addMountedInput, 0, len(inputs))
 	for _, in := range inputs {
+		if err := validateStagedSegment(in.BaseName); err != nil {
+			return nil, fmt.Errorf("invalid mounted name for input %q: %w", in.Original, err)
+		}
 		mount := in.BaseName
 		if opts.Wrap {
-			wrapName := strings.TrimSpace(opts.WrapName)
+			wrapName := opts.WrapName
 			if wrapName == "" {
 				wrapName = in.BaseName
 			}
-			mount = path.Join(unixfs.CanonicalStagedPath(wrapName), in.BaseName)
+			if err := validateStagedSegment(wrapName); err != nil {
+				return nil, fmt.Errorf("invalid wrap name %q: %w", opts.WrapName, err)
+			}
+			mount = path.Join(wrapName, in.BaseName)
 		}
 		if prefix != "" {
 			mount = path.Join(prefix, mount)
 		}
-		mount = unixfs.CanonicalStagedPath(mount)
-		if mount == "" {
-			return nil, fmt.Errorf("invalid mount path for input %q", in.Original)
+		if err := validateStagedPath(mount); err != nil {
+			return nil, fmt.Errorf("invalid mount path for input %q: %w", in.Original, err)
 		}
 		if _, ok := seen[mount]; ok {
 			return nil, fmt.Errorf("duplicate mounted target path %q", mount)
@@ -320,6 +408,181 @@ func mountAddInputs(inputs []addInput, opts addBuildOptions) ([]addMountedInput,
 		})
 	}
 	return out, nil
+}
+
+// preflightMountedInputs validates the complete projected namespace and every
+// followed filesystem object before staging is allowed to write CAS blocks or
+// invoke gateway mutations. Execution intentionally constructs fresh ignore
+// filters afterward so preflight does not consume their per-directory state.
+func preflightMountedInputs(mounted []addMountedInput, ignoreOpts addIgnoreOptions) error {
+	for _, item := range mounted {
+		if err := validateStagedPath(item.MountBase); err != nil {
+			return fmt.Errorf("invalid mount path for input %q: %w", item.Input.Original, err)
+		}
+		if item.Input.Info.IsDir() {
+			if item.Input.Symlink {
+				if err := preflightHierarchicalDirectory(item.Input.AbsPath, "", nil); err != nil {
+					return err
+				}
+				continue
+			}
+			if err := preflightDirectoryInput(item, ignoreOpts); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := preflightRegularFile(item.Input.AbsPath, item.MountBase); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func preflightRegularFile(localPath, targetPath string) error {
+	if err := validateStagedPath(targetPath); err != nil {
+		return fmt.Errorf("invalid target path %q: %w", targetPath, err)
+	}
+	info, err := os.Stat(localPath)
+	if err != nil {
+		return fmt.Errorf("stat %s: %w", localPath, err)
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("not a regular file: %s", localPath)
+	}
+	return nil
+}
+
+func preflightDirectoryInput(item addMountedInput, ignoreOpts addIgnoreOptions) error {
+	ignoreFilter, err := newAddIgnoreFilter(item.Input.AbsPath, ignoreOpts)
+	if err != nil {
+		return err
+	}
+	return filepath.WalkDir(item.Input.AbsPath, func(current string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if current != item.Input.AbsPath {
+			ignored, err := ignoreFilter.Ignored(current, d.IsDir())
+			if err != nil {
+				return err
+			}
+			if ignored {
+				if d.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+		}
+		if d.IsDir() {
+			if err := ignoreFilter.LoadDirectoryRules(current); err != nil {
+				return err
+			}
+		}
+		if current == item.Input.AbsPath {
+			return nil
+		}
+
+		rel, err := filepath.Rel(item.Input.AbsPath, current)
+		if err != nil {
+			return fmt.Errorf("compute relative path %q: %w", current, err)
+		}
+		targetPath, err := stagedPathFromRelative(item.MountBase, rel)
+		if err != nil {
+			return fmt.Errorf("project local path %s into UnixFS: %w", current, err)
+		}
+		if err := validateStagedPath(targetPath); err != nil {
+			return fmt.Errorf("project local path %s into UnixFS: %w", current, err)
+		}
+
+		if d.Type()&fs.ModeSymlink != 0 {
+			info, err := os.Stat(current)
+			if err != nil {
+				return fmt.Errorf("stat symlink target %s: %w", current, err)
+			}
+			if info.IsDir() {
+				return preflightHierarchicalDirectory(current, "", nil)
+			}
+			if !info.Mode().IsRegular() {
+				return fmt.Errorf("non-regular symlink target is not supported: %s", current)
+			}
+			return nil
+		}
+		if d.IsDir() {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			return fmt.Errorf("stat %s: %w", current, err)
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("non-regular file is not supported: %s", current)
+		}
+		return nil
+	})
+}
+
+func preflightHierarchicalDirectory(localDir, mountBase string, seen map[string]struct{}) error {
+	cycleKey, err := filepath.EvalSymlinks(localDir)
+	if err != nil {
+		cycleKey, err = filepath.Abs(localDir)
+		if err != nil {
+			return fmt.Errorf("resolve directory %s: %w", localDir, err)
+		}
+	}
+	if seen == nil {
+		seen = make(map[string]struct{})
+	}
+	if _, ok := seen[cycleKey]; ok {
+		return fmt.Errorf("symlink cycle detected at %s", localDir)
+	}
+	seen[cycleKey] = struct{}{}
+	defer delete(seen, cycleKey)
+
+	entries, err := os.ReadDir(localDir)
+	if err != nil {
+		return fmt.Errorf("read directory %s: %w", localDir, err)
+	}
+	for _, entry := range entries {
+		childLocal := filepath.Join(localDir, entry.Name())
+		childPath, err := appendStagedSegment(mountBase, entry.Name())
+		if err != nil {
+			return fmt.Errorf("project local path %s into UnixFS: %w", childLocal, err)
+		}
+		if err := validateStagedPath(childPath); err != nil {
+			return fmt.Errorf("project local path %s into UnixFS: %w", childLocal, err)
+		}
+
+		if entry.Type()&fs.ModeSymlink != 0 {
+			info, err := os.Stat(childLocal)
+			if err != nil {
+				return fmt.Errorf("stat symlink target %s: %w", childLocal, err)
+			}
+			if info.IsDir() {
+				if err := preflightHierarchicalDirectory(childLocal, childPath, seen); err != nil {
+					return err
+				}
+				continue
+			}
+			if !info.Mode().IsRegular() {
+				return fmt.Errorf("non-regular symlink target is not supported: %s", childLocal)
+			}
+			continue
+		}
+		info, err := os.Stat(childLocal)
+		if err != nil {
+			return fmt.Errorf("stat %s: %w", childLocal, err)
+		}
+		if info.IsDir() {
+			if err := preflightHierarchicalDirectory(childLocal, childPath, seen); err != nil {
+				return err
+			}
+			continue
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("non-regular file is not supported: %s", childLocal)
+		}
+	}
+	return nil
 }
 
 func stageDirectoryInput(ctx context.Context, root *unixfs.StagedNode, casClient addCASClient, remote Gateway, item addMountedInput, ignoreOpts addIgnoreOptions) (int, int64, int, *addMaterializeResult, int, error) {
@@ -362,7 +625,10 @@ func stageDirectoryInput(ctx context.Context, root *unixfs.StagedNode, casClient
 				if err != nil {
 					return fmt.Errorf("compute relative path %q: %w", current, err)
 				}
-				targetPath := unixfs.CanonicalStagedPath(path.Join(mountBase, filepath.ToSlash(rel)))
+				targetPath, err := stagedPathFromRelative(mountBase, rel)
+				if err != nil {
+					return fmt.Errorf("project local path %s into UnixFS: %w", current, err)
+				}
 				info, err := os.Stat(current)
 				if err != nil {
 					return fmt.Errorf("stat symlink target %s: %w", current, err)
@@ -402,9 +668,9 @@ func stageDirectoryInput(ctx context.Context, root *unixfs.StagedNode, casClient
 		if rel == "." {
 			return nil
 		}
-		targetPath := unixfs.CanonicalStagedPath(path.Join(mountBase, filepath.ToSlash(rel)))
-		if targetPath == "" {
-			return nil
+		targetPath, err := stagedPathFromRelative(mountBase, rel)
+		if err != nil {
+			return fmt.Errorf("project local path %s into UnixFS: %w", current, err)
 		}
 
 		if d.IsDir() {
@@ -436,9 +702,8 @@ func stageDirectoryInput(ctx context.Context, root *unixfs.StagedNode, casClient
 }
 
 func stageSingleFile(ctx context.Context, root *unixfs.StagedNode, casClient addCASClient, remote Gateway, localPath string, targetPath string) (int64, int, error) {
-	targetPath = unixfs.CanonicalStagedPath(targetPath)
-	if targetPath == "" {
-		return 0, 0, fmt.Errorf("target path must not be empty")
+	if err := validateStagedPath(targetPath); err != nil {
+		return 0, 0, fmt.Errorf("invalid target path %q: %w", targetPath, err)
 	}
 
 	info, err := os.Stat(localPath)

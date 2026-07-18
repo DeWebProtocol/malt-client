@@ -95,7 +95,8 @@ func (s *Store) Trust(alias, root, profile, gateway, source string) (Record, err
 	if alias == "" {
 		return Record{}, fmt.Errorf("trusted-root alias is empty")
 	}
-	if _, err := cid.Parse(root); err != nil {
+	canonicalRoot, err := canonicalCID(root)
+	if err != nil {
 		return Record{}, fmt.Errorf("invalid trusted root: %w", err)
 	}
 	s.mu.Lock()
@@ -111,10 +112,10 @@ func (s *Store) Trust(alias, root, profile, gateway, source string) (Record, err
 	record.Profile = profile
 	record.Gateway = gateway
 	record.PreviousRoot = previous
-	record.AcceptedRoot = root
+	record.AcceptedRoot = canonicalRoot
 	record.Source = source
 	record.AcceptedAt = time.Now().UTC()
-	record.Candidates = removeCandidate(record.Candidates, root)
+	record.Candidates = removeCandidate(record.Candidates, canonicalRoot)
 	s.state.Roots[alias] = record
 	if err := s.writeLocked(); err != nil {
 		return Record{}, err
@@ -124,10 +125,12 @@ func (s *Store) Trust(alias, root, profile, gateway, source string) (Record, err
 
 func (s *Store) AddCandidate(alias, root, baseRoot, source string) (Record, error) {
 	alias = normalizeAlias(alias)
-	if _, err := cid.Parse(root); err != nil {
+	canonicalRoot, err := canonicalCID(root)
+	if err != nil {
 		return Record{}, fmt.Errorf("invalid candidate root: %w", err)
 	}
-	if _, err := cid.Parse(baseRoot); err != nil {
+	canonicalBaseRoot, err := canonicalCID(baseRoot)
+	if err != nil {
 		return Record{}, fmt.Errorf("invalid candidate base root: %w", err)
 	}
 	s.mu.Lock()
@@ -141,15 +144,15 @@ func (s *Store) AddCandidate(alias, root, baseRoot, source string) (Record, erro
 	if !ok {
 		return Record{}, ErrNotFound
 	}
-	if baseRoot != record.AcceptedRoot {
-		return Record{}, fmt.Errorf("%w: candidate base %s, accepted root %s", ErrStaleCandidate, baseRoot, record.AcceptedRoot)
+	if canonicalBaseRoot != record.AcceptedRoot {
+		return Record{}, fmt.Errorf("%w: candidate base %s, accepted root %s", ErrStaleCandidate, canonicalBaseRoot, record.AcceptedRoot)
 	}
-	if root == record.AcceptedRoot {
+	if canonicalRoot == record.AcceptedRoot {
 		return cloneRecord(record), nil
 	}
-	record.Candidates = removeCandidate(record.Candidates, root)
+	record.Candidates = removeCandidate(record.Candidates, canonicalRoot)
 	record.Candidates = append(record.Candidates, Candidate{
-		Root: root, BaseRoot: baseRoot, Source: source, ObservedAt: time.Now().UTC(),
+		Root: canonicalRoot, BaseRoot: canonicalBaseRoot, Source: source, ObservedAt: time.Now().UTC(),
 	})
 	s.state.Roots[alias] = record
 	if err := s.writeLocked(); err != nil {
@@ -160,6 +163,10 @@ func (s *Store) AddCandidate(alias, root, baseRoot, source string) (Record, erro
 
 func (s *Store) AcceptCandidate(alias, root, source string) (Record, error) {
 	alias = normalizeAlias(alias)
+	canonicalRoot, err := canonicalCID(root)
+	if err != nil {
+		return Record{}, fmt.Errorf("invalid candidate root: %w", err)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	unlock, err := s.lockAndReload()
@@ -174,7 +181,7 @@ func (s *Store) AcceptCandidate(alias, root, source string) (Record, error) {
 	var candidate Candidate
 	found := false
 	for _, value := range record.Candidates {
-		if value.Root == root {
+		if value.Root == canonicalRoot {
 			candidate = value
 			found = true
 			break
@@ -187,10 +194,10 @@ func (s *Store) AcceptCandidate(alias, root, source string) (Record, error) {
 		return Record{}, fmt.Errorf("%w: candidate base %q, accepted root %s", ErrStaleCandidate, candidate.BaseRoot, record.AcceptedRoot)
 	}
 	record.PreviousRoot = record.AcceptedRoot
-	record.AcceptedRoot = root
+	record.AcceptedRoot = canonicalRoot
 	record.Source = source
 	record.AcceptedAt = time.Now().UTC()
-	record.Candidates = removeCandidate(record.Candidates, root)
+	record.Candidates = removeCandidate(record.Candidates, canonicalRoot)
 	s.state.Roots[alias] = record
 	if err := s.writeLocked(); err != nil {
 		return Record{}, err
@@ -251,6 +258,31 @@ func (s *Store) reloadLocked() error {
 	if next.Roots == nil {
 		next.Roots = map[string]Record{}
 	}
+	for alias, record := range next.Roots {
+		if record.AcceptedRoot, err = canonicalCID(record.AcceptedRoot); err != nil {
+			return fmt.Errorf("trusted-root alias %q has invalid accepted root: %w", alias, err)
+		}
+		if record.PreviousRoot, err = canonicalOptionalCID(record.PreviousRoot); err != nil {
+			return fmt.Errorf("trusted-root alias %q has invalid previous root: %w", alias, err)
+		}
+		candidates := make([]Candidate, 0, len(record.Candidates))
+		for i, candidate := range record.Candidates {
+			candidate.Root, err = canonicalCID(candidate.Root)
+			if err != nil {
+				return fmt.Errorf("trusted-root alias %q candidate %d has invalid root: %w", alias, i, err)
+			}
+			candidate.BaseRoot, err = canonicalOptionalCID(candidate.BaseRoot)
+			if err != nil {
+				return fmt.Errorf("trusted-root alias %q candidate %d has invalid base root: %w", alias, i, err)
+			}
+			if candidate.Root == record.AcceptedRoot {
+				continue
+			}
+			candidates = append(removeCandidate(candidates, candidate.Root), candidate)
+		}
+		record.Candidates = candidates
+		next.Roots[alias] = record
+	}
 	s.state = next
 	return nil
 }
@@ -292,6 +324,21 @@ func (s *Store) writeLocked() error {
 }
 
 func normalizeAlias(alias string) string { return strings.TrimSpace(alias) }
+
+func canonicalCID(raw string) (string, error) {
+	parsed, err := cid.Parse(raw)
+	if err != nil {
+		return "", err
+	}
+	return parsed.String(), nil
+}
+
+func canonicalOptionalCID(raw string) (string, error) {
+	if raw == "" {
+		return "", nil
+	}
+	return canonicalCID(raw)
+}
 
 func removeCandidate(values []Candidate, root string) []Candidate {
 	out := make([]Candidate, 0, len(values))
