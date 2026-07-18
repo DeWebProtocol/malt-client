@@ -706,19 +706,18 @@ func stageSingleFile(ctx context.Context, root *unixfs.StagedNode, casClient add
 		return 0, 0, fmt.Errorf("invalid target path %q: %w", targetPath, err)
 	}
 
-	info, err := os.Stat(localPath)
-	if err != nil {
-		return 0, 0, fmt.Errorf("stat %s: %w", localPath, err)
-	}
-	if !info.Mode().IsRegular() {
-		return 0, 0, fmt.Errorf("not a regular file: %s", localPath)
-	}
-
 	f, err := os.Open(localPath)
 	if err != nil {
 		return 0, 0, fmt.Errorf("open %s: %w", localPath, err)
 	}
 	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return 0, 0, fmt.Errorf("stat opened file %s: %w", localPath, err)
+	}
+	if !info.Mode().IsRegular() {
+		return 0, 0, fmt.Errorf("not a regular file: %s", localPath)
+	}
 
 	key, listBacked, err := unixfs.MaterializeStagedFilePayload(ctx, casClient, remote, f, info.Size(), addFixedChunkSize)
 	if err != nil {
