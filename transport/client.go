@@ -337,13 +337,17 @@ func (c *Client) responseError(resp *http.Response) error {
 	if err != nil {
 		return &Error{StatusCode: resp.StatusCode, Message: err.Error()}
 	}
+	return responseErrorData(resp.StatusCode, data)
+}
+
+func responseErrorData(statusCode int, data []byte) error {
 	var apiErr errorResponse
 	if err := json.Unmarshal(data, &apiErr); err == nil {
 		if message := apiErr.messageText(); message != "" {
-			return &Error{StatusCode: resp.StatusCode, Message: message}
+			return &Error{StatusCode: statusCode, Message: message}
 		}
 	}
-	return &Error{StatusCode: resp.StatusCode, Message: http.StatusText(resp.StatusCode)}
+	return &Error{StatusCode: statusCode, Message: http.StatusText(statusCode)}
 }
 
 func (c *Client) do(ctx context.Context, method, route string, query map[string]string, body, out any) error {

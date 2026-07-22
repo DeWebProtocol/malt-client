@@ -113,9 +113,16 @@ func (s *Service) Pull(ctx context.Context) (Workspace, error) {
 	err = s.withState(true, func() error {
 		workspace := s.workspace()
 		workspace.Initialized = true
+		remote, err = monotonicHead(workspace.Remote, remote)
+		if err != nil {
+			return fmt.Errorf("merge observed Bucket head: %w", err)
+		}
 		workspace.Remote = remote
 		if !hasPending(workspace.Stashes) {
-			workspace.Base = remote
+			workspace.Base, err = monotonicHead(workspace.Base, remote)
+			if err != nil {
+				return fmt.Errorf("merge Bucket base: %w", err)
+			}
 		}
 		workspace.UpdatedAt = time.Now().UTC()
 		s.state.Workspaces[s.bucketID] = workspace
@@ -239,7 +246,7 @@ func (s *Service) Push(ctx context.Context, candidateRoot cid.Cid, changeSet cid
 	}
 	result, err := s.gateway.PushBucket(ctx, transport.BucketPushRequest{
 		PushID: stash.PushID, BaseCommit: stash.Base.CommitID, BaseRoot: stash.Base.Root,
-		CandidateRoot: stash.CandidateRoot, ExpectedHeadRevision: stash.Base.Revision,
+		CandidateRoot: stash.CandidateRoot, BaseRevision: stash.Base.Revision,
 		ChangeSetCID: stash.ChangeSetCID, Message: stash.Message,
 	})
 	if err != nil {
@@ -268,8 +275,16 @@ func (s *Service) Push(ctx context.Context, candidateRoot cid.Cid, changeSet cid
 		if err != nil {
 			return err
 		}
-		current.Base = head
-		current.Remote = head
+		current.Remote, err = monotonicHead(current.Remote, head)
+		if err != nil {
+			return fmt.Errorf("merge pushed Bucket head: %w", err)
+		}
+		if !hasPending(current.Stashes) {
+			current.Base, err = monotonicHead(current.Base, current.Remote)
+			if err != nil {
+				return fmt.Errorf("merge pushed Bucket base: %w", err)
+			}
+		}
 		current.UpdatedAt = time.Now().UTC()
 		s.state.Workspaces[s.bucketID] = current
 		workspace = cloneWorkspace(current)
@@ -390,7 +405,14 @@ func (s *Service) write() error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	return os.Rename(name, s.path)
+	if err := os.Rename(name, s.path); err != nil {
+		return err
+	}
+	// The rename is already committed from the caller's perspective. Directory
+	// sync is best-effort because some supported filesystems reject it, and an
+	// error after rename would make a successful state transition ambiguous.
+	_ = syncParentDirectory(filepath.Dir(s.path))
+	return nil
 }
 
 func headFromRef(value transport.BucketRef) (Head, error) {
@@ -412,6 +434,19 @@ func validateHead(value Head) error {
 		return err
 	}
 	return nil
+}
+
+func monotonicHead(current, incoming Head) (Head, error) {
+	if incoming.Revision < current.Revision {
+		return current, nil
+	}
+	if incoming.Revision > current.Revision {
+		return incoming, nil
+	}
+	if current != incoming {
+		return current, fmt.Errorf("revision %d identifies different commits or roots", current.Revision)
+	}
+	return current, nil
 }
 
 func hasPending(values []Stash) bool {

@@ -24,7 +24,7 @@ remote, err := transport.New(transport.Options{
 head, err := remote.BucketHead(ctx)
 result, err := remote.PushBucket(ctx, transport.BucketPushRequest{
     PushID: "device-operation-id", BaseCommit: head.CommitID,
-    BaseRoot: head.Root, ExpectedHeadRevision: head.Revision,
+    BaseRoot: head.Root, BaseRevision: head.Revision,
     CandidateRoot: candidate.String(),
 })
 ```

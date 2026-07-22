@@ -64,13 +64,13 @@ type BucketConflict struct {
 }
 
 type BucketPushRequest struct {
-	PushID               string `json:"push_id"`
-	BaseCommit           string `json:"base_commit,omitempty"`
-	BaseRoot             string `json:"base_root,omitempty"`
-	CandidateRoot        string `json:"candidate_root"`
-	ExpectedHeadRevision uint64 `json:"expected_head_revision"`
-	ChangeSetCID         string `json:"change_set_cid,omitempty"`
-	Message              string `json:"message,omitempty"`
+	PushID        string `json:"push_id"`
+	BaseCommit    string `json:"base_commit,omitempty"`
+	BaseRoot      string `json:"base_root,omitempty"`
+	CandidateRoot string `json:"candidate_root"`
+	BaseRevision  uint64 `json:"base_revision"`
+	ChangeSetCID  string `json:"change_set_cid,omitempty"`
+	Message       string `json:"message,omitempty"`
 }
 
 type BucketPushResult struct {
@@ -222,6 +222,9 @@ func (c *Client) PushBucket(ctx context.Context, request BucketPushRequest) (*Bu
 	var result BucketPushResult
 	if err := json.Unmarshal(body, &result); err != nil {
 		return nil, fmt.Errorf("decode gateway Bucket push response: %w", err)
+	}
+	if resp.StatusCode == http.StatusConflict && result.Status != "branched" {
+		return nil, responseErrorData(resp.StatusCode, body)
 	}
 	if err := c.validatePushResult(result, resp.StatusCode); err != nil {
 		return nil, err

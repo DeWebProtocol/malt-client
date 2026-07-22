@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -85,7 +86,7 @@ func TestPushStashesBeforeFetchAndKeepsOriginalBase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if gateway.lastPush.BaseCommit != "cmt_base" || gateway.lastPush.BaseRoot != baseRoot.String() || gateway.lastPush.ExpectedHeadRevision != 1 {
+	if gateway.lastPush.BaseCommit != "cmt_base" || gateway.lastPush.BaseRoot != baseRoot.String() || gateway.lastPush.BaseRevision != 1 {
 		t.Fatalf("push used fetched head instead of stashed base: %#v", gateway.lastPush)
 	}
 	if outcome.Result.Status != "merged" || outcome.Workspace.Base.CommitID != "cmt_merge" || len(outcome.Workspace.Stashes) != 0 {
@@ -178,8 +179,159 @@ func TestPushRequiresCandidateStagedAgainstCapturedBase(t *testing.T) {
 	if _, err := service.Push(t.Context(), candidateRoot, cid.Undef, ""); err != nil {
 		t.Fatal(err)
 	}
-	if gateway.lastPush.BaseCommit != captured.CommitID || gateway.lastPush.BaseRoot != captured.Root || gateway.lastPush.ExpectedHeadRevision != captured.Revision {
+	if gateway.lastPush.BaseCommit != captured.CommitID || gateway.lastPush.BaseRoot != captured.Root || gateway.lastPush.BaseRevision != captured.Revision {
 		t.Fatalf("Push base = %#v, want %#v", gateway.lastPush, captured)
+	}
+}
+
+type delayedHeadGateway struct {
+	head    transport.BucketRef
+	started chan<- struct{}
+	release <-chan struct{}
+}
+
+func (g *delayedHeadGateway) BucketHead(context.Context) (*transport.BucketRef, error) {
+	g.started <- struct{}{}
+	<-g.release
+	value := g.head
+	return &value, nil
+}
+
+func (*delayedHeadGateway) PushBucket(context.Context, transport.BucketPushRequest) (*transport.BucketPushResult, error) {
+	return nil, errors.New("unexpected push")
+}
+
+func TestConcurrentPullResponsesDoNotRegressWorkspaceRevision(t *testing.T) {
+	now := time.Now().UTC()
+	path := filepath.Join(t.TempDir(), "buckets.json")
+	initial := &fakeGateway{head: testHead("cmt_one", testCID(t, "one"), 1, now)}
+	service, err := Open(path, initial, "bkt_one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Pull(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	olderGateway := &delayedHeadGateway{
+		head: testHead("cmt_two", testCID(t, "two"), 2, now), started: started, release: release,
+	}
+	older, err := Open(path, olderGateway, "bkt_one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	newer, err := Open(path, &fakeGateway{head: testHead("cmt_three", testCID(t, "three"), 3, now)}, "bkt_one")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var workers sync.WaitGroup
+	workers.Add(1)
+	var olderErr error
+	go func() {
+		defer workers.Done()
+		_, olderErr = older.Pull(t.Context())
+	}()
+	<-started
+	if _, err := newer.Pull(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+	workers.Wait()
+	if olderErr != nil {
+		t.Fatal(olderErr)
+	}
+
+	workspace, err := service.Status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if workspace.Remote.Revision != 3 || workspace.Remote.CommitID != "cmt_three" || workspace.Base.Revision != 3 {
+		t.Fatalf("workspace regressed after delayed response: %#v", workspace)
+	}
+}
+
+type delayedPushGateway struct {
+	head    transport.BucketRef
+	result  transport.BucketPushResult
+	started chan<- struct{}
+	release <-chan struct{}
+}
+
+func (g *delayedPushGateway) BucketHead(context.Context) (*transport.BucketRef, error) {
+	value := g.head
+	return &value, nil
+}
+
+func (g *delayedPushGateway) PushBucket(_ context.Context, _ transport.BucketPushRequest) (*transport.BucketPushResult, error) {
+	g.started <- struct{}{}
+	<-g.release
+	value := g.result
+	return &value, nil
+}
+
+func TestDelayedPushResponseDoesNotRegressNewerObservedHead(t *testing.T) {
+	now := time.Now().UTC()
+	path := filepath.Join(t.TempDir(), "buckets.json")
+	baseRoot := testCID(t, "base")
+	candidateRoot := testCID(t, "candidate")
+	baseHead := testHead("cmt_one", baseRoot, 1, now)
+	initial, err := Open(path, &fakeGateway{head: baseHead}, "bkt_one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := initial.Pull(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	base, err := initial.CurrentBase(baseRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := initial.Stage(candidateRoot, base, cid.Undef, "delayed push"); err != nil {
+		t.Fatal(err)
+	}
+
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	pushHead := testHead("cmt_two", candidateRoot, 2, now)
+	pusher, err := Open(path, &delayedPushGateway{
+		head: baseHead, result: transport.BucketPushResult{Status: "fast_forward", Head: pushHead},
+		started: started, release: release,
+	}, "bkt_one")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var workers sync.WaitGroup
+	workers.Add(1)
+	var pushErr error
+	go func() {
+		defer workers.Done()
+		_, pushErr = pusher.Push(t.Context(), candidateRoot, cid.Undef, "delayed push")
+	}()
+	<-started
+	newerHead := testHead("cmt_three", testCID(t, "newer"), 3, now)
+	observer, err := Open(path, &fakeGateway{head: newerHead}, "bkt_one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := observer.Pull(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+	workers.Wait()
+	if pushErr != nil {
+		t.Fatal(pushErr)
+	}
+
+	workspace, err := initial.Status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if workspace.Remote.Revision != 3 || workspace.Base.Revision != 3 || len(workspace.Stashes) != 0 {
+		t.Fatalf("workspace regressed after delayed push response: %#v", workspace)
 	}
 }
 

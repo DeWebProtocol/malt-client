@@ -2,8 +2,10 @@ package transport_test
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,6 +18,7 @@ func TestBucketClientScopesNativeRoutesAndAcceptsConflictResult(t *testing.T) {
 	root := mustBlockCID(t, []byte("root"))
 	target := mustBlockCID(t, []byte("target"))
 	now := time.Now().UTC()
+	var receivedPush client.BucketPushRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := r.Header.Get("Authorization"); got != "Bearer tenant-secret" {
 			t.Fatalf("Authorization = %q", got)
@@ -31,6 +34,15 @@ func TestBucketClientScopesNativeRoutesAndAcceptsConflictResult(t *testing.T) {
 				CommitID: "cmt_one", Root: root.String(), Revision: 2, CreatedAt: now, UpdatedAt: now,
 			})
 		case "/v1/buckets/bkt_one/push":
+			if err := json.NewDecoder(r.Body).Decode(&receivedPush); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			if receivedPush.PushID == "reused" {
+				w.WriteHeader(http.StatusConflict)
+				_ = json.NewEncoder(w).Encode(map[string]string{"error": "bucket push ID was already used for a different request"})
+				return
+			}
 			w.WriteHeader(http.StatusConflict)
 			branch := client.BucketRef{
 				BucketID: "bkt_one", Name: "conflicts/alice/conflict_one", Kind: "conflict", State: "open",
@@ -65,10 +77,20 @@ func TestBucketClientScopesNativeRoutesAndAcceptsConflictResult(t *testing.T) {
 		t.Fatalf("Bucket Merkle DAG resolve response=%q err=%v", response, err)
 	}
 	result, err := transport.PushBucket(t.Context(), client.BucketPushRequest{
-		PushID: "push_one", BaseCommit: "cmt_one", BaseRoot: root.String(), CandidateRoot: target.String(), ExpectedHeadRevision: 2,
+		PushID: "push_one", BaseCommit: "cmt_one", BaseRoot: root.String(), CandidateRoot: target.String(), BaseRevision: 2,
 	})
 	if err != nil || result.Status != "branched" || result.Branch == nil || result.Conflicts[0].Coordinate != "docs/readme" {
 		t.Fatalf("push result=%#v err=%v", result, err)
+	}
+	if receivedPush.BaseRevision != 2 {
+		t.Fatalf("push base revision = %d", receivedPush.BaseRevision)
+	}
+	_, err = transport.PushBucket(t.Context(), client.BucketPushRequest{
+		PushID: "reused", BaseCommit: "cmt_one", BaseRoot: root.String(), CandidateRoot: target.String(), BaseRevision: 2,
+	})
+	var apiErr *client.Error
+	if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusConflict || !strings.Contains(apiErr.Message, "already used") {
+		t.Fatalf("push ID conflict error = %T %v", err, err)
 	}
 }
 

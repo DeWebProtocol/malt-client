@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -130,7 +131,7 @@ var bucketStageCmd = &cobra.Command{
 
 var bucketPushCmd = &cobra.Command{
 	Use:   "push <candidate-root>",
-	Short: "Stash, fetch, and push a locally materialized candidate root",
+	Short: "Push a previously staged candidate root",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		candidate, err := cid.Parse(args[0])
@@ -150,6 +151,9 @@ var bucketPushCmd = &cobra.Command{
 		}
 		outcome, err := syncer.Push(cmd.Context(), candidate, changeSet, bucketPushMessage)
 		if err != nil {
+			if errors.Is(err, bucketsync.ErrNotStaged) {
+				return fmt.Errorf("%w; run malt add first, or use malt bucket stage for an externally materialized root", err)
+			}
 			return err
 		}
 		printJSON(outcome)
