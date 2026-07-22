@@ -158,6 +158,10 @@ persists base, observed remote head, and local stashes under a cross-process
 lock and implements stash-before-fetch push ordering. It deliberately does not
 import or mutate package `trust`.
 
+Single-value CAS `Get`/`Has` require that authenticated Bucket selection. The
+transport does not attempt the Gateway's removed public raw-CAS GET/HEAD route;
+unscoped calls fail locally without sending a request.
+
 Package `merkledag` owns the gateway's distinct compatibility profiles over a
 narrow fixed-route profile transport. `ResolveMerkleDAGVerified` and
 `ReadMerkleDAGVerified` recompute every

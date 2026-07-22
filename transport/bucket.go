@@ -76,6 +76,7 @@ type BucketPushRequest struct {
 type BucketPushResult struct {
 	Status    string           `json:"status"`
 	Head      BucketRef        `json:"head"`
+	Candidate BucketCommit     `json:"candidate"`
 	Commit    BucketCommit     `json:"commit"`
 	Branch    *BucketRef       `json:"branch,omitempty"`
 	MergeBase string           `json:"merge_base,omitempty"`
@@ -134,7 +135,7 @@ func (c *Client) BucketHead(ctx context.Context) (*BucketRef, error) {
 	if err := c.doTenant(ctx, http.MethodGet, c.bucketRoute("/head"), nil, &result); err != nil {
 		return nil, err
 	}
-	if err := c.validateRef(result); err != nil {
+	if err := ValidateBucketHead(c.bucketID, result); err != nil {
 		return nil, err
 	}
 	return &result, nil
@@ -180,19 +181,36 @@ func (c *Client) PushBucket(ctx context.Context, request BucketPushRequest) (*Bu
 	if err := c.requireSelectedBucket(); err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(request.PushID) == "" {
+	request.PushID = strings.TrimSpace(request.PushID)
+	request.BaseCommit = strings.TrimSpace(request.BaseCommit)
+	request.BaseRoot = strings.TrimSpace(request.BaseRoot)
+	request.CandidateRoot = strings.TrimSpace(request.CandidateRoot)
+	request.ChangeSetCID = strings.TrimSpace(request.ChangeSetCID)
+	request.Message = strings.TrimSpace(request.Message)
+	if request.PushID == "" {
 		return nil, fmt.Errorf("Bucket push ID is empty")
 	}
-	if _, err := cid.Parse(request.CandidateRoot); err != nil {
+	candidateRoot, err := cid.Parse(request.CandidateRoot)
+	if err != nil {
 		return nil, fmt.Errorf("invalid candidate root: %w", err)
 	}
-	if (request.BaseCommit == "") != (request.BaseRoot == "") {
-		return nil, fmt.Errorf("Bucket base commit and root must be supplied together")
+	request.CandidateRoot = candidateRoot.String()
+	if (request.BaseCommit == "") != (request.BaseRoot == "") || (request.BaseCommit == "") != (request.BaseRevision == 0) {
+		return nil, fmt.Errorf("Bucket base commit, root, and non-zero revision must be supplied together")
 	}
 	if request.BaseRoot != "" {
-		if _, err := cid.Parse(request.BaseRoot); err != nil {
+		baseRoot, err := cid.Parse(request.BaseRoot)
+		if err != nil {
 			return nil, fmt.Errorf("invalid base root: %w", err)
 		}
+		request.BaseRoot = baseRoot.String()
+	}
+	if request.ChangeSetCID != "" {
+		changeSet, err := cid.Parse(request.ChangeSetCID)
+		if err != nil {
+			return nil, fmt.Errorf("invalid change-set CID: %w", err)
+		}
+		request.ChangeSetCID = changeSet.String()
 	}
 	data, err := json.Marshal(request)
 	if err != nil {
@@ -226,7 +244,7 @@ func (c *Client) PushBucket(ctx context.Context, request BucketPushRequest) (*Bu
 	if resp.StatusCode == http.StatusConflict && result.Status != "branched" {
 		return nil, responseErrorData(resp.StatusCode, body)
 	}
-	if err := c.validatePushResult(result, resp.StatusCode); err != nil {
+	if err := c.validatePushResult(request, result, resp.StatusCode); err != nil {
 		return nil, err
 	}
 	return &result, nil
@@ -268,16 +286,29 @@ func (c *Client) validateRef(value BucketRef) error {
 	return nil
 }
 
-func (c *Client) validatePushResult(value BucketPushResult, statusCode int) error {
-	if err := c.validateRef(value.Head); err != nil {
-		return err
+// ValidateBucketHead verifies the endpoint-specific main ref contract. Commit
+// IDs are intentionally opaque; only their binding to a root and ref
+// generation is interpreted here.
+func ValidateBucketHead(bucketID string, value BucketRef) error {
+	if strings.TrimSpace(bucketID) == "" || value.BucketID != bucketID || value.Name != "main" || value.Kind != "main" || value.State != "open" {
+		return fmt.Errorf("gateway returned an invalid Bucket main head")
 	}
-	if value.Commit.ID == "" || value.Commit.BucketID != c.bucketID {
-		return fmt.Errorf("gateway returned an invalid Bucket commit")
+	if value.CommitID == "" {
+		if value.Root != "" || value.Revision != 0 {
+			return fmt.Errorf("gateway returned an invalid empty Bucket main head")
+		}
+		return nil
 	}
-	if _, err := cid.Parse(value.Commit.Root); err != nil {
-		return fmt.Errorf("gateway returned an invalid Bucket commit root")
+	if value.Root == "" || value.Revision == 0 {
+		return fmt.Errorf("gateway returned an invalid Bucket main head tuple")
 	}
+	if _, err := cid.Parse(value.Root); err != nil {
+		return fmt.Errorf("gateway returned an invalid Bucket main head root")
+	}
+	return nil
+}
+
+func (c *Client) validatePushResult(request BucketPushRequest, value BucketPushResult, statusCode int) error {
 	switch value.Status {
 	case "fast_forward", "merged":
 		if statusCode != http.StatusCreated || value.Branch != nil {
@@ -293,5 +324,147 @@ func (c *Client) validatePushResult(value BucketPushResult, statusCode int) erro
 	default:
 		return fmt.Errorf("gateway returned unsupported Bucket push status %q", value.Status)
 	}
+	return ValidateBucketPushResult(c.bucketID, request, value)
+}
+
+// ValidateBucketPushResult binds an untrusted push result to the selected
+// Bucket and the exact request. It is exported so synchronization adapters
+// cannot accidentally clear durable work when supplied another Gateway
+// implementation that bypasses Client's HTTP validation.
+func ValidateBucketPushResult(bucketID string, request BucketPushRequest, value BucketPushResult) error {
+	if err := ValidateBucketHead(bucketID, value.Head); err != nil {
+		return err
+	}
+	if err := validateBucketCommit(bucketID, value.Candidate); err != nil {
+		return fmt.Errorf("gateway returned an invalid Bucket candidate: %w", err)
+	}
+	if err := validateBucketCommit(bucketID, value.Commit); err != nil {
+		return fmt.Errorf("gateway returned an invalid final Bucket commit: %w", err)
+	}
+	if value.Candidate.Root != request.CandidateRoot {
+		return fmt.Errorf("gateway returned a Bucket candidate for a different root")
+	}
+	if value.Candidate.BaseRoot != request.BaseRoot {
+		return fmt.Errorf("gateway returned a Bucket candidate for a different base root")
+	}
+	if value.Candidate.ChangeSetCID != request.ChangeSetCID || value.Candidate.Message != request.Message {
+		return fmt.Errorf("gateway returned a Bucket candidate for different push metadata")
+	}
+	if !candidateParentsMatchRequest(value.Candidate, request, value.Status == "branched") {
+		return fmt.Errorf("gateway returned a Bucket candidate with inconsistent parents")
+	}
+
+	switch value.Status {
+	case "fast_forward":
+		if value.Branch != nil || len(value.Conflicts) != 0 || value.MergeBase != "" || value.Head.CommitID == "" {
+			return fmt.Errorf("gateway returned an inconsistent fast-forward Bucket push")
+		}
+		if !equalBucketCommit(value.Candidate, value.Commit) || value.Commit.Root != request.CandidateRoot {
+			return fmt.Errorf("gateway returned a fast-forward result for a different candidate")
+		}
+		if !refPointsToCommit(value.Head, value.Commit) {
+			return fmt.Errorf("gateway returned a fast-forward head that does not point to the final commit")
+		}
+	case "merged":
+		if value.Branch != nil || len(value.Conflicts) != 0 || value.Candidate.ID == value.Commit.ID || value.Head.CommitID == "" {
+			return fmt.Errorf("gateway returned an inconsistent merged Bucket push")
+		}
+		if value.MergeBase != request.BaseRoot {
+			return fmt.Errorf("gateway returned a merge result for a different base")
+		}
+		if len(value.Commit.Parents) != 2 || value.Commit.Parents[0] == "" || value.Commit.Parents[0] == value.Candidate.ID || value.Commit.Parents[1] != value.Candidate.ID {
+			return fmt.Errorf("gateway returned a merge commit with inconsistent parents")
+		}
+		if value.Commit.BaseRoot == "" {
+			return fmt.Errorf("gateway returned a merge commit without its remote base root")
+		}
+		if !refPointsToCommit(value.Head, value.Commit) {
+			return fmt.Errorf("gateway returned a merged head that does not point to the final commit")
+		}
+	case "branched":
+		if value.Branch == nil || !equalBucketCommit(value.Candidate, value.Commit) || len(value.Conflicts) == 0 || value.MergeBase != request.BaseRoot {
+			return fmt.Errorf("gateway returned an inconsistent conflicted Bucket push")
+		}
+		if err := validateConflictRef(bucketID, *value.Branch); err != nil {
+			return err
+		}
+		if !refPointsToCommit(*value.Branch, value.Candidate) {
+			return fmt.Errorf("gateway returned a conflict branch that does not preserve the candidate")
+		}
+	default:
+		return fmt.Errorf("gateway returned unsupported Bucket push status %q", value.Status)
+	}
 	return nil
+}
+
+func validateBucketCommit(bucketID string, value BucketCommit) error {
+	if value.ID == "" || value.BucketID != bucketID {
+		return fmt.Errorf("commit identity does not match the selected Bucket")
+	}
+	if _, err := cid.Parse(value.Root); err != nil {
+		return fmt.Errorf("invalid commit root")
+	}
+	if value.BaseRoot != "" {
+		if _, err := cid.Parse(value.BaseRoot); err != nil {
+			return fmt.Errorf("invalid commit base root")
+		}
+	}
+	if value.ChangeSetCID != "" {
+		if _, err := cid.Parse(value.ChangeSetCID); err != nil {
+			return fmt.Errorf("invalid commit change-set CID")
+		}
+	}
+	seen := make(map[string]struct{}, len(value.Parents))
+	for _, parent := range value.Parents {
+		if parent == "" || parent == value.ID {
+			return fmt.Errorf("invalid commit parent")
+		}
+		if _, exists := seen[parent]; exists {
+			return fmt.Errorf("duplicate commit parent")
+		}
+		seen[parent] = struct{}{}
+	}
+	return nil
+}
+
+func candidateParentsMatchRequest(candidate BucketCommit, request BucketPushRequest, allowMissing bool) bool {
+	if request.BaseCommit == "" {
+		return len(candidate.Parents) == 0
+	}
+	if allowMissing && len(candidate.Parents) == 0 {
+		// A history-conflict branch may preserve a candidate whose claimed base
+		// could not be resolved, so there is no authenticated parent edge.
+		return true
+	}
+	return len(candidate.Parents) == 1 && candidate.Parents[0] == request.BaseCommit
+}
+
+func validateConflictRef(bucketID string, value BucketRef) error {
+	nameParts := strings.Split(value.Name, "/")
+	if value.BucketID != bucketID || value.Kind != "conflict" || value.State != "open" || len(nameParts) != 3 || nameParts[0] != "conflicts" || nameParts[1] == "" || nameParts[2] == "" {
+		return fmt.Errorf("gateway returned an invalid Bucket conflict branch")
+	}
+	if value.CommitID == "" || value.Root == "" || value.Revision == 0 {
+		return fmt.Errorf("gateway returned an empty Bucket conflict branch")
+	}
+	if _, err := cid.Parse(value.Root); err != nil {
+		return fmt.Errorf("gateway returned an invalid Bucket conflict branch root")
+	}
+	return nil
+}
+
+func refPointsToCommit(ref BucketRef, commit BucketCommit) bool {
+	return ref.BucketID == commit.BucketID && ref.CommitID == commit.ID && ref.Root == commit.Root
+}
+
+func equalBucketCommit(left, right BucketCommit) bool {
+	if left.ID != right.ID || left.BucketID != right.BucketID || left.Root != right.Root || left.BaseRoot != right.BaseRoot || left.Author != right.Author || left.Credential != right.Credential || left.ChangeSetCID != right.ChangeSetCID || left.Message != right.Message || !left.CreatedAt.Equal(right.CreatedAt) || len(left.Parents) != len(right.Parents) {
+		return false
+	}
+	for i := range left.Parents {
+		if left.Parents[i] != right.Parents[i] {
+			return false
+		}
+	}
+	return true
 }

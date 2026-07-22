@@ -29,21 +29,34 @@ result, err := remote.PushBucket(ctx, transport.BucketPushRequest{
 })
 ```
 
+`BaseRevision` records the main-ref generation observed alongside the captured
+base. It is descriptive synchronization metadata, not a client-supplied CAS
+token and not an ordering constraint on a replayed push result. Gateway performs
+ref CAS against the generation it reads while handling the request.
+
 HTTP `409` from a conflicting push is decoded as a valid `branched`
 `BucketPushResult`; it contains the unchanged `main`, the preserved conflict
-branch, and coordinates that could not be merged.
+branch, and coordinates that could not be merged. Every push result explicitly
+returns both the submitted `candidate` and the final `commit`: they are equal
+for fast-forward and branched results, while an automatic merge returns a
+distinct final commit whose head and parent bindings are checked before the
+result is exposed. Commit IDs are opaque version identifiers; callers must not
+infer semantics from their text format.
 
 `Options` also exposes independent JSON, blob, and error-response byte limits.
 Defaults are 96 MiB, 64 MiB, and 1 MiB respectively. Limits apply after HTTP
 decompression; oversized and trailing JSON responses are rejected before their
 contents are trusted or returned.
 
-The transport exposes generic `Resolve` and `Read`, immutable CAS `Get`, `Put`,
-`Has`, bounded `PutBatch`/`HasBatch`, root creation, semantic mutation, typed
+The transport exposes generic `Resolve` and `Read`, immutable CAS ingest
+`Put`, bounded `PutBatch`/`HasBatch`, root creation, semantic mutation, typed
 diagnostic metrics, diagnostic verifier calls, and two fixed Merkle DAG
-compatibility methods. It intentionally has no arbitrary profile-route method.
-Transport methods validate wire shape and CAS bytes, but generic resolve/read
-results remain untrusted until locally verified against caller inputs.
+compatibility methods. Single-value CAS `Get`/`Has` are available only when a
+managed Bucket is selected, and fail locally instead of attempting the removed
+public raw-CAS read route. It intentionally has no arbitrary profile-route
+method. Transport methods validate wire shape and CAS bytes, but generic
+resolve/read results remain untrusted until locally verified against caller
+inputs.
 
 `Metrics` returns inexpensive monotonic counters. `MetricsWithStorage` also
 requests Gateway's O(live KV entries) logical scan and should be used only by
@@ -62,8 +75,20 @@ against that captured commit/root/revision. `Push` refuses unstaged candidates,
 calls `BucketHead` without changing the stash, leaves it pending across network
 failures, and submits the original base with a stable push ID. `Pull` updates
 the observed remote head but does not replace a base while pending stashes
-exist. This metadata is distinct from the accepted root policy in package
-`trust`.
+exist. The message and change-set fields are frozen before the first network
+attempt and reused after response loss or process restart; a retry that
+explicitly supplies different values fails locally. Malformed push responses
+leave the durable stash pending. This metadata is distinct from the accepted
+root policy in package `trust`.
+
+Bucket workspace schema version 2 persists `request_frozen` explicitly. When a
+version 1 file is opened, every pending stash is conservatively treated as
+possibly sent: its original base, push ID, message, and change-set are frozen
+and atomically rewritten as version 2 before retry is possible. Version 1 had
+no durable sent/not-sent distinction, so this rule also freezes a legacy stash
+that in fact never reached Gateway. A file claiming schema version 2 must
+contain an explicit boolean `request_frozen` for every stash; incomplete v2
+records are rejected rather than interpreted as unsent work.
 
 ## Reusable application use cases
 

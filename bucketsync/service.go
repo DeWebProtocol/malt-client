@@ -26,6 +26,8 @@ var (
 	ErrNotStaged      = errors.New("Bucket candidate is not staged with its original base")
 )
 
+const bucketWorkspaceVersion = 2
+
 type Gateway interface {
 	BucketHead(context.Context) (*transport.BucketRef, error)
 	PushBucket(context.Context, transport.BucketPushRequest) (*transport.BucketPushResult, error)
@@ -51,6 +53,7 @@ type Stash struct {
 	Base          Head       `json:"base"`
 	ChangeSetCID  string     `json:"change_set_cid,omitempty"`
 	Message       string     `json:"message,omitempty"`
+	RequestFrozen bool       `json:"request_frozen"`
 	Status        string     `json:"status"`
 	Branch        string     `json:"branch,omitempty"`
 	Conflicts     []Conflict `json:"conflicts,omitempty"`
@@ -103,6 +106,12 @@ func Open(path string, gateway Gateway, bucketID string) (*Service, error) {
 func (s *Service) Pull(ctx context.Context) (Workspace, error) {
 	head, err := s.gateway.BucketHead(ctx)
 	if err != nil {
+		return Workspace{}, err
+	}
+	if head == nil {
+		return Workspace{}, fmt.Errorf("gateway returned an empty Bucket head response")
+	}
+	if err := transport.ValidateBucketHead(s.bucketID, *head); err != nil {
 		return Workspace{}, err
 	}
 	remote, err := headFromRef(*head)
@@ -219,11 +228,26 @@ func (s *Service) Push(ctx context.Context, candidateRoot cid.Cid, changeSet cid
 				continue
 			}
 			found = true
+			requestedChangeSet := ""
 			if changeSet.Defined() {
-				workspace.Stashes[i].ChangeSetCID = changeSet.String()
+				requestedChangeSet = changeSet.String()
 			}
-			if strings.TrimSpace(message) != "" {
-				workspace.Stashes[i].Message = strings.TrimSpace(message)
+			requestedMessage := strings.TrimSpace(message)
+			if workspace.Stashes[i].RequestFrozen {
+				if requestedChangeSet != "" && requestedChangeSet != workspace.Stashes[i].ChangeSetCID {
+					return fmt.Errorf("Bucket retry change set differs from the persisted push request")
+				}
+				if requestedMessage != "" && requestedMessage != workspace.Stashes[i].Message {
+					return fmt.Errorf("Bucket retry message differs from the persisted push request")
+				}
+			} else {
+				if requestedChangeSet != "" {
+					workspace.Stashes[i].ChangeSetCID = requestedChangeSet
+				}
+				if requestedMessage != "" {
+					workspace.Stashes[i].Message = requestedMessage
+				}
+				workspace.Stashes[i].RequestFrozen = true
 			}
 			workspace.Stashes[i].UpdatedAt = time.Now().UTC()
 			stash = workspace.Stashes[i]
@@ -244,12 +268,19 @@ func (s *Service) Push(ctx context.Context, candidateRoot cid.Cid, changeSet cid
 	if _, err := s.Pull(ctx); err != nil {
 		return PushOutcome{}, err
 	}
-	result, err := s.gateway.PushBucket(ctx, transport.BucketPushRequest{
+	request := transport.BucketPushRequest{
 		PushID: stash.PushID, BaseCommit: stash.Base.CommitID, BaseRoot: stash.Base.Root,
 		CandidateRoot: stash.CandidateRoot, BaseRevision: stash.Base.Revision,
 		ChangeSetCID: stash.ChangeSetCID, Message: stash.Message,
-	})
+	}
+	result, err := s.gateway.PushBucket(ctx, request)
 	if err != nil {
+		return PushOutcome{}, err
+	}
+	if result == nil {
+		return PushOutcome{}, fmt.Errorf("gateway returned an empty Bucket push response")
+	}
+	if err := transport.ValidateBucketPushResult(s.bucketID, request, *result); err != nil {
 		return PushOutcome{}, err
 	}
 	var workspace Workspace
@@ -321,8 +352,17 @@ func (s *Service) withState(write bool, operation func() error) error {
 		return fmt.Errorf("lock Bucket workspace: %w", err)
 	}
 	defer func() { _ = unlock() }()
-	if err := s.reload(); err != nil {
+	migrated, err := s.reload()
+	if err != nil {
 		return err
+	}
+	// Version 1 could not distinguish a never-sent stash from one whose
+	// response was lost. Persist the conservative freeze before any operation
+	// can retry or alter its request fingerprint.
+	if migrated {
+		if err := s.write(); err != nil {
+			return fmt.Errorf("migrate Bucket workspace: %w", err)
+		}
 	}
 	if err := operation(); err != nil {
 		return err
@@ -333,48 +373,95 @@ func (s *Service) withState(write bool, operation func() error) error {
 	return s.write()
 }
 
-func (s *Service) reload() error {
+func (s *Service) reload() (bool, error) {
 	data, err := os.ReadFile(s.path)
 	if errors.Is(err, os.ErrNotExist) {
-		s.state = persistedState{Version: 1, Workspaces: map[string]Workspace{}}
-		return nil
+		s.state = persistedState{Version: bucketWorkspaceVersion, Workspaces: map[string]Workspace{}}
+		return false, nil
 	}
 	if err != nil {
-		return err
+		return false, err
 	}
 	var state persistedState
 	if err := json.Unmarshal(data, &state); err != nil {
-		return fmt.Errorf("decode Bucket workspace: %w", err)
-	}
-	if state.Version != 1 {
-		return fmt.Errorf("unsupported Bucket workspace version %d", state.Version)
+		return false, fmt.Errorf("decode Bucket workspace: %w", err)
 	}
 	if state.Workspaces == nil {
 		state.Workspaces = map[string]Workspace{}
 	}
+	migrated := false
+	switch state.Version {
+	case 1:
+		// Version 1 omitted RequestFrozen. Treat every pending request as if
+		// it may already have reached Gateway, preserving its exact fingerprint.
+		for id, workspace := range state.Workspaces {
+			for i := range workspace.Stashes {
+				if workspace.Stashes[i].Status == "pending" {
+					workspace.Stashes[i].RequestFrozen = true
+				}
+			}
+			state.Workspaces[id] = workspace
+		}
+		state.Version = bucketWorkspaceVersion
+		migrated = true
+	case bucketWorkspaceVersion:
+		if err := validateVersionTwoFreezeFields(data); err != nil {
+			return false, err
+		}
+	default:
+		return false, fmt.Errorf("unsupported Bucket workspace version %d", state.Version)
+	}
 	for id, workspace := range state.Workspaces {
 		if workspace.BucketID != id {
-			return fmt.Errorf("Bucket workspace key does not match record")
+			return false, fmt.Errorf("Bucket workspace key does not match record")
 		}
 		if err := validateHead(workspace.Base); err != nil {
-			return fmt.Errorf("Bucket %s base: %w", id, err)
+			return false, fmt.Errorf("Bucket %s base: %w", id, err)
 		}
 		if err := validateHead(workspace.Remote); err != nil {
-			return fmt.Errorf("Bucket %s remote: %w", id, err)
+			return false, fmt.Errorf("Bucket %s remote: %w", id, err)
 		}
 		for _, stash := range workspace.Stashes {
 			if stash.ID == "" || stash.PushID == "" || (stash.Status != "pending" && stash.Status != "branched") {
-				return fmt.Errorf("Bucket %s has an invalid stash", id)
+				return false, fmt.Errorf("Bucket %s has an invalid stash", id)
 			}
 			if _, err := cid.Parse(stash.CandidateRoot); err != nil {
-				return fmt.Errorf("Bucket %s stash root: %w", id, err)
+				return false, fmt.Errorf("Bucket %s stash root: %w", id, err)
 			}
 			if err := validateHead(stash.Base); err != nil {
-				return fmt.Errorf("Bucket %s stash base: %w", id, err)
+				return false, fmt.Errorf("Bucket %s stash base: %w", id, err)
 			}
 		}
 	}
 	s.state = state
+	return migrated, nil
+}
+
+func validateVersionTwoFreezeFields(data []byte) error {
+	var raw struct {
+		Workspaces map[string]struct {
+			Stashes []json.RawMessage `json:"stashes"`
+		} `json:"workspaces"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return fmt.Errorf("decode Bucket workspace freeze metadata: %w", err)
+	}
+	for id, workspace := range raw.Workspaces {
+		for i, stash := range workspace.Stashes {
+			var fields map[string]json.RawMessage
+			if err := json.Unmarshal(stash, &fields); err != nil {
+				return fmt.Errorf("Bucket %s stash %d freeze metadata: %w", id, i, err)
+			}
+			encoded, ok := fields["request_frozen"]
+			if !ok {
+				return fmt.Errorf("Bucket %s stash %d lacks explicit request_frozen", id, i)
+			}
+			var frozen *bool
+			if err := json.Unmarshal(encoded, &frozen); err != nil || frozen == nil {
+				return fmt.Errorf("Bucket %s stash %d has invalid request_frozen", id, i)
+			}
+		}
+	}
 	return nil
 }
 

@@ -159,6 +159,9 @@ func (c *Client) PutWithCodec(ctx context.Context, data []byte, codec uint64) (c
 
 // Get reads one immutable payload and validates its CID before returning it.
 func (c *Client) Get(ctx context.Context, key cid.Cid) ([]byte, error) {
+	if c == nil || c.bucketID == "" {
+		return nil, fmt.Errorf("single-value CAS Get requires a configured managed Bucket")
+	}
 	u, err := c.endpoint(c.nativeRoute("/v1/cas/" + url.PathEscape(key.String())))
 	if err != nil {
 		return nil, err
@@ -167,7 +170,7 @@ func (c *Client) Get(ctx context.Context, key cid.Cid) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	resp, err := c.send(req, c.bucketID != "")
+	resp, err := c.send(req, true)
 	if err != nil {
 		return nil, err
 	}
@@ -192,6 +195,9 @@ func (c *Client) Get(ctx context.Context, key cid.Cid) ([]byte, error) {
 
 // Has checks whether the gateway CAS contains a payload.
 func (c *Client) Has(ctx context.Context, key cid.Cid) (bool, error) {
+	if c == nil || c.bucketID == "" {
+		return false, fmt.Errorf("single-value CAS Has requires a configured managed Bucket")
+	}
 	u, err := c.endpoint(c.nativeRoute("/v1/cas/" + url.PathEscape(key.String())))
 	if err != nil {
 		return false, err
@@ -200,7 +206,7 @@ func (c *Client) Has(ctx context.Context, key cid.Cid) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	resp, err := c.send(req, c.bucketID != "")
+	resp, err := c.send(req, true)
 	if err != nil {
 		return false, err
 	}
