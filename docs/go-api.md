@@ -13,6 +13,26 @@ transport:
 remote, err := transport.New(transport.Options{BaseURL: "https://gateway.example"})
 ```
 
+Select authenticated managed-Bucket routes with:
+
+```go
+remote, err := transport.New(transport.Options{
+    BaseURL:          "https://gateway.example",
+    TenantBearerToken: os.Getenv("MALT_GATEWAY_API_KEY"),
+    BucketID:          "bkt_...",
+})
+head, err := remote.BucketHead(ctx)
+result, err := remote.PushBucket(ctx, transport.BucketPushRequest{
+    PushID: "device-operation-id", BaseCommit: head.CommitID,
+    BaseRoot: head.Root, ExpectedHeadRevision: head.Revision,
+    CandidateRoot: candidate.String(),
+})
+```
+
+HTTP `409` from a conflicting push is decoded as a valid `branched`
+`BucketPushResult`; it contains the unchanged `main`, the preserved conflict
+branch, and coordinates that could not be merged.
+
 `Options` also exposes independent JSON, blob, and error-response byte limits.
 Defaults are 96 MiB, 64 MiB, and 1 MiB respectively. Limits apply after HTTP
 decompression; oversized and trailing JSON responses are rejected before their
@@ -35,6 +55,15 @@ requests reject redirects instead of forwarding the bearer token to another
 URL.
 
 No exported signature contains a type from `internal/`.
+
+Package `bucketsync` provides the durable client workflow used by the CLI.
+Call `CurrentBase` before materializing local work, then `Stage` the candidate
+against that captured commit/root/revision. `Push` refuses unstaged candidates,
+calls `BucketHead` without changing the stash, leaves it pending across network
+failures, and submits the original base with a stable push ID. `Pull` updates
+the observed remote head but does not replace a base while pending stashes
+exist. This metadata is distinct from the accepted root policy in package
+`trust`.
 
 ## Reusable application use cases
 
@@ -186,7 +215,19 @@ malt cat <trusted-root|alias> [path] --offset N --length N
 malt rm <trusted-root|alias> <path>
 malt merkledag resolve <trusted-root-cid> [path]
 malt merkledag cat <trusted-root-cid> [path] [--offset N --length N]
+malt bucket list
+malt bucket pull
+malt bucket status
+malt bucket stage <candidate-root-cid> --base-commit <commit> --base-root <root> --base-revision <revision>
+malt bucket push <candidate-root-cid> [-m message]
+malt bucket branches
+malt bucket branch <name> [--from commit-id]
 ```
+
+Native `malt add` and `malt rm` stage their results automatically when a
+Bucket is configured. `bucket stage` is the explicit bridge for candidates
+materialized by another tool; its base values must have been captured before
+that materialization.
 
 - `stat` writes one JSON object containing verified metadata and evidence.
 - `cat` writes exact verified bytes only; diagnostics and JSON are not mixed

@@ -6,6 +6,7 @@ import (
 	"github.com/dewebprotocol/malt-client/application"
 	client "github.com/dewebprotocol/malt-client/transport"
 	unixfs "github.com/dewebprotocol/malt-client/unixfs"
+	cid "github.com/ipfs/go-cid"
 	"github.com/spf13/cobra"
 )
 
@@ -129,6 +130,14 @@ func runRemove(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	selected, err := roots.Select(args[0])
+	if err != nil {
+		return err
+	}
+	bucketSyncer, bucketBase, err := prepareBucketCandidate(selected.Root)
+	if err != nil {
+		return err
+	}
 	app, err := application.NewUnixFS(writer, writer, roots)
 	if err != nil {
 		return err
@@ -136,6 +145,11 @@ func runRemove(cmd *cobra.Command, args []string) error {
 	result, err := app.RemovePath(cmd.Context(), args[0], args[1])
 	if err != nil {
 		return daemonCommandError(err)
+	}
+	if bucketSyncer != nil {
+		if _, err := bucketSyncer.Stage(result.CandidateRoot, bucketBase, cid.Undef, "malt rm"); err != nil {
+			return fmt.Errorf("candidate %s was materialized but could not be staged: %w", result.CandidateRoot, err)
+		}
 	}
 	printJSON(result)
 	return nil

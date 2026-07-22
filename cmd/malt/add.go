@@ -7,8 +7,10 @@ import (
 
 	"github.com/dewebprotocol/malt-client/application"
 	clientadd "github.com/dewebprotocol/malt-client/application/add"
+	"github.com/dewebprotocol/malt-client/bucketsync"
 	gatewayclient "github.com/dewebprotocol/malt-client/transport"
 	"github.com/dewebprotocol/malt-client/unixfs"
+	cid "github.com/ipfs/go-cid"
 	"github.com/spf13/cobra"
 )
 
@@ -125,6 +127,28 @@ func runAdd(cmd *cobra.Command, args []string) error {
 			return err
 		}
 	}
+	var bucketSyncer *bucketsync.Service
+	var bucketBase bucketsync.Head
+	if opts.Target == clientadd.TargetMALT {
+		baseRoot := cid.Undef
+		switch {
+		case strings.TrimSpace(addRootFlag) != "":
+			baseRoot, err = cid.Parse(addRootFlag)
+			if err != nil {
+				return fmt.Errorf("invalid base root: %w", err)
+			}
+		case strings.TrimSpace(addAliasFlag) != "":
+			selected, selectErr := roots.Select(addAliasFlag)
+			if selectErr != nil {
+				return selectErr
+			}
+			baseRoot = selected.Root
+		}
+		bucketSyncer, bucketBase, err = prepareBucketCandidate(baseRoot)
+		if err != nil {
+			return err
+		}
+	}
 	execution, err := clientadd.Run(ctx, roots, addGateway, casClient, clientadd.Request{
 		Inputs:  args,
 		Root:    addRootFlag,
@@ -140,6 +164,15 @@ func runAdd(cmd *cobra.Command, args []string) error {
 	}
 	result := execution.Result
 	opts = execution.Options
+	if bucketSyncer != nil {
+		candidate, parseErr := cid.Parse(result.NewRoot)
+		if parseErr != nil {
+			return fmt.Errorf("materialized candidate root is invalid: %w", parseErr)
+		}
+		if _, stageErr := bucketSyncer.Stage(candidate, bucketBase, cid.Undef, "malt add"); stageErr != nil {
+			return fmt.Errorf("candidate %s was materialized but could not be staged: %w", candidate, stageErr)
+		}
+	}
 
 	summary := addSummary{
 		Target:           opts.Target,

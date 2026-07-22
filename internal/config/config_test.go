@@ -9,7 +9,7 @@ import (
 func TestWriteAndLoadPreserveClientBoundary(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
 	cfg := &Config{
-		Gateway: GatewayConfig{BaseURL: "https://gateway.example.test/"},
+		Gateway: GatewayConfig{BaseURL: "https://gateway.example.test/", APIKey: "secret", Bucket: "bkt_one"},
 		Daemon: DaemonConfig{
 			SocketPath: filepath.Join(t.TempDir(), "client.sock"),
 			StatePath:  filepath.Join(t.TempDir(), "roots.json"),
@@ -32,6 +32,9 @@ func TestWriteAndLoadPreserveClientBoundary(t *testing.T) {
 	if loaded.GatewayBaseURL() != "https://gateway.example.test" {
 		t.Fatalf("gateway URL = %q", loaded.GatewayBaseURL())
 	}
+	if loaded.Gateway.APIKey != "secret" || loaded.Gateway.Bucket != "bkt_one" || loaded.Workspace.StatePath == "" {
+		t.Fatalf("managed Gateway config = %#v, workspace = %#v", loaded.Gateway, loaded.Workspace)
+	}
 }
 
 func TestLoadAppliesMissingDefaults(t *testing.T) {
@@ -43,7 +46,29 @@ func TestLoadAppliesMissingDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if loaded.Daemon.SocketPath == "" || loaded.Daemon.StatePath == "" {
+	if loaded.Daemon.SocketPath == "" || loaded.Daemon.StatePath == "" || loaded.Workspace.StatePath == "" {
 		t.Fatalf("daemon defaults missing: %#v", loaded.Daemon)
+	}
+}
+
+func TestWriteTightensExistingConfigPermissions(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Default()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Gateway.APIKey = "secret"
+	if err := Write(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("config mode = %#o, want 0600", info.Mode().Perm())
 	}
 }

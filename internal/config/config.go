@@ -16,12 +16,19 @@ const (
 )
 
 type Config struct {
-	Gateway GatewayConfig `json:"gateway"`
-	Daemon  DaemonConfig  `json:"daemon"`
+	Gateway   GatewayConfig   `json:"gateway"`
+	Daemon    DaemonConfig    `json:"daemon"`
+	Workspace WorkspaceConfig `json:"workspace"`
 }
 
 type GatewayConfig struct {
 	BaseURL string `json:"base_url"`
+	APIKey  string `json:"api_key,omitempty"`
+	Bucket  string `json:"bucket,omitempty"`
+}
+
+type WorkspaceConfig struct {
+	StatePath string `json:"state_path"`
 }
 
 type DaemonConfig struct {
@@ -41,6 +48,7 @@ func Default() (*Config, error) {
 			SocketPath: filepath.Join(root, "client.sock"),
 			StatePath:  filepath.Join(root, "roots.json"),
 		},
+		Workspace: WorkspaceConfig{StatePath: filepath.Join(root, "buckets.json")},
 	}, nil
 }
 
@@ -107,6 +115,9 @@ func Write(path string, cfg *Config) error {
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		return fmt.Errorf("write client config: %w", err)
 	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		return fmt.Errorf("secure client config permissions: %w", err)
+	}
 	return nil
 }
 
@@ -121,6 +132,9 @@ func (c *Config) applyDefaults() {
 	if c.Daemon.StatePath == "" {
 		c.Daemon.StatePath = defaults.Daemon.StatePath
 	}
+	if c.Workspace.StatePath == "" {
+		c.Workspace.StatePath = defaults.Workspace.StatePath
+	}
 }
 
 func (c *Config) Validate() error {
@@ -129,6 +143,12 @@ func (c *Config) Validate() error {
 	}
 	if c.Daemon.SocketPath == "" || c.Daemon.StatePath == "" {
 		return fmt.Errorf("daemon socket and state paths are required")
+	}
+	if c.Workspace.StatePath == "" {
+		return fmt.Errorf("Bucket workspace state path is required")
+	}
+	if strings.TrimSpace(c.Gateway.Bucket) != "" && strings.TrimSpace(c.Gateway.APIKey) == "" {
+		return fmt.Errorf("gateway Bucket requires an API key")
 	}
 	return nil
 }

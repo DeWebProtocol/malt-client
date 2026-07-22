@@ -9,6 +9,7 @@ It owns:
 
 - the `malt` CLI and local daemon lifecycle;
 - trusted/candidate root state and explicit acceptance;
+- managed-Bucket base/remote/stash state and stash-before-fetch synchronization;
 - gateway HTTP transport;
 - UnixFS path, manifest, fixed-list payload, import, and range-body semantics;
 - IPFS-compatible Merkle DAG UnixFS import as an alternative client target;
@@ -81,6 +82,7 @@ unixfs     -> MALT core verifier + narrow transport ports
 merkledag  -> CID/link replay + fixed profile transport
 trust      -> accepted/candidate root persistence
 transport  -> HTTP only; never imports unixfs, merkledag, or trust
+bucketsync -> transport + independent durable synchronization metadata
 ```
 
 `transport.Client` is one reusable HTTP connection, but consumers depend on
@@ -92,6 +94,14 @@ The `application` layer supplies the caller-selected root, composes verified
 UnixFS or Merkle DAG reads, records mutation results as candidates, and exposes
 explicit candidate acceptance for both CLI and daemon adapters. The `trust`
 package alone persists accepted roots and performs promotion.
+
+`bucketsync` is separate from `trust`. The caller captures the exact Bucket
+commit/root/revision before materialization and stages the candidate against
+that base before any remote fetch. Push refuses candidates without this durable
+binding. Fetch updates observed remote metadata without changing that stash. A
+subsequent push can therefore be fast-forwarded, merged, or preserved by the
+Gateway without silently replacing local work. Neither pull nor push promotes
+a Gateway head into trusted-root policy.
 
 An explicit CID is parsed before any accepted-root alias lookup. Consequently,
 explicit-CID resolve/read/write operations do not require the alias store to
@@ -143,6 +153,7 @@ the operation fails as stale instead of applying a sibling transition.
   hybrid MALT materialization, Merkle DAG import, and candidate recording.
 - `transport`: untrusted native MALT/CAS HTTP transport and narrow capability
   interfaces.
+- `bucketsync`: durable Bucket base/remote/stash state and push orchestration.
 - `trust`: accepted and candidate root policy plus durable local persistence.
 - `merkledag`: isolated compatibility profile client and local CID/link replay.
 - `merkledag/importer`: IPFS-compatible UnixFS DAG construction.
@@ -155,7 +166,7 @@ the operation fails as stale instead of applying a sibling transition.
   and payload verification.
 
 The `internal` packages are not compatibility promises. The public
-`application`, `transport`, `trust`, `unixfs`, and `merkledag` packages are the
+`application`, `bucketsync`, `transport`, `trust`, `unixfs`, and `merkledag` packages are the
 intended pre-release integration surface; their profiles remain experimental
 until a release policy is published. Architecture tests fail if transport
 begins to import application or trust packages, or if Merkle DAG compatibility
