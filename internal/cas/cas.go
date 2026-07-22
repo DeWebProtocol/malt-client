@@ -25,9 +25,11 @@ type Block struct {
 type PutStatus string
 
 const (
-	PutStatusStored         PutStatus = "stored"
-	PutStatusAlreadyPresent PutStatus = "already_present"
-	PutStatusDuplicate      PutStatus = "duplicate"
+	PutStatusStored             PutStatus = "stored"
+	PutStatusAlreadyPresent     PutStatus = "already_present"
+	PutStatusDuplicate          PutStatus = "duplicate"
+	PutStatusNewlyPersisted     PutStatus = "newly_persisted"
+	PutStatusDuplicateInRequest PutStatus = "duplicate_in_request"
 )
 
 // PutResult is the ordered result for a block write.

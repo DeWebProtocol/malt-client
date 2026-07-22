@@ -37,7 +37,7 @@ func TestClientExposesFixedMerkleDAGRoutesWithoutArbitraryProfileEscapeHatch(t *
 	if _, ok := typ.MethodByName("CreatePayloadRoot"); ok {
 		t.Fatal("generic transport client exposes UnixFS payload-root semantics")
 	}
-	for _, name := range []string{"PostMerkleDAGResolve", "PostMerkleDAGRead"} {
+	for _, name := range []string{"PostMerkleDAGResolve", "PostMerkleDAGRead", "PostMerkleDAGCARRead"} {
 		if _, ok := typ.MethodByName(name); !ok {
 			t.Fatalf("transport client is missing fixed capability %s", name)
 		}
@@ -122,7 +122,7 @@ func TestClientRejectsOversizedAndTrailingResponses(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/healthz":
-			_, _ = io.WriteString(w, `{"status":"ok"}{"trailing":true}`)
+			_, _ = io.WriteString(w, `{"status":"ok","evaluation_instance_token":"`+strings.Repeat("a", 64)+`"}{"trailing":true}`)
 		case "/v1/buckets/bkt_one/cas/" + payloadCID.String():
 			_, _ = w.Write(bytesOf('x', 17))
 		case "/v1/buckets/bkt_one/resolve":
@@ -186,6 +186,54 @@ func TestGetClassifiesOnlyHTTPNotFoundAsCASNotFound(t *testing.T) {
 	var apiErr *client.Error
 	if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusNotFound {
 		t.Fatalf("Get error = %T %v, want structured 404", err, err)
+	}
+}
+
+func TestRawCASGetDefersCIDVerificationButKeepsResponseBound(t *testing.T) {
+	requested := mustBlockCID(t, []byte("expected"))
+	hostile := []byte("wrong")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet ||
+			(r.URL.Path != "/v1/cas/"+requested.String() && r.URL.Path != "/v1/buckets/bkt_one/cas/"+requested.String()) {
+			http.NotFound(w, r)
+			return
+		}
+		if strings.HasPrefix(r.URL.Path, "/v1/buckets/") && r.Header.Get("Authorization") != "Bearer tenant-secret" {
+			http.Error(w, "missing tenant authorization", http.StatusUnauthorized)
+			return
+		}
+		_, _ = w.Write(hostile)
+	}))
+	defer server.Close()
+
+	transport, err := client.New(client.Options{BaseURL: server.URL, MaxBlobResponseBytes: int64(len(hostile))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := transport.GetRawForLocalCIDVerification(t.Context(), requested)
+	if err != nil {
+		t.Fatalf("bounded raw GET: %v", err)
+	}
+	if string(raw) != string(hostile) {
+		t.Fatalf("raw GET = %q, want hostile bytes %q", raw, hostile)
+	}
+	verified, err := client.New(client.Options{
+		BaseURL: server.URL, TenantBearerToken: "tenant-secret", BucketID: "bkt_one",
+		MaxBlobResponseBytes: int64(len(hostile)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := verified.Get(t.Context(), requested); err == nil || !strings.Contains(err.Error(), "does not match CID") {
+		t.Fatalf("Bucket-scoped verified GET error = %v, want CID mismatch", err)
+	}
+
+	bounded, err := client.New(client.Options{BaseURL: server.URL, MaxBlobResponseBytes: int64(len(hostile) - 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := bounded.GetRawForLocalCIDVerification(t.Context(), requested); err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("oversized raw GET error = %v, want response-bound rejection", err)
 	}
 }
 

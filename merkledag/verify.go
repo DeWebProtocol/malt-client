@@ -46,7 +46,7 @@ func VerifyMerkleDAGResolve(ctx context.Context, request MerkleDAGResolveRequest
 	if response.Kind != merkleDAGNodeKind(resolved.key, resolved.node) {
 		return fmt.Errorf("Merkle-DAG resolve kind %q does not match replayed kind %q", response.Kind, merkleDAGNodeKind(resolved.key, resolved.node))
 	}
-	return dag.requireAllReachable(request.Root)
+	return dag.requireAllUsed()
 }
 
 // VerifyMerkleDAGRead validates every evidence block CID, replays path
@@ -119,7 +119,7 @@ func VerifyMerkleDAGRead(ctx context.Context, request MerkleDAGReadRequest, resp
 	if !bytes.Equal(response.Data, want) {
 		return fmt.Errorf("Merkle-DAG response bytes do not match locally replayed range")
 	}
-	return dag.requireAllReachable(request.Root)
+	return dag.requireAllUsed()
 }
 
 func validateMerkleDAGResolveRequest(request MerkleDAGResolveRequest) error {

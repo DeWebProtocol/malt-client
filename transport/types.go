@@ -2,7 +2,18 @@ package transport
 
 // HealthResponse is returned by the managed gateway health endpoint.
 type HealthResponse struct {
-	Status string `json:"status"`
+	Status                        string `json:"status"`
+	EvaluationInstanceToken       string `json:"evaluation_instance_token,omitempty"`
+	KVBackend                     string `json:"kv_backend,omitempty"`
+	BlobBackend                   string `json:"blob_backend,omitempty"`
+	ArcTableMode                  string `json:"arctable_mode,omitempty"`
+	CommitmentProfile             string `json:"default_commitment_backend,omitempty"`
+	CommitmentBackends            string `json:"commitment_backends,omitempty"`
+	EvaluationCASWriteAccounting  string `json:"evaluation_cas_write_accounting,omitempty"`
+	EvaluationCASWriteIsolation   string `json:"evaluation_cas_write_isolation,omitempty"`
+	ClientRootWriteAccounting     string `json:"client_root_write_accounting,omitempty"`
+	ClientRootExactAcceptance     string `json:"client_root_exact_acceptance,omitempty"`
+	EvaluationClientRootBootstrap string `json:"evaluation_client_root_bootstrap,omitempty"`
 }
 
 // SemanticMutationRequest materializes a root-relative semantic mutation.

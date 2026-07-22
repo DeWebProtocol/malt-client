@@ -3,6 +3,7 @@ package transport
 import (
 	"context"
 
+	"github.com/dewebprotocol/malt/mutation"
 	"github.com/dewebprotocol/malt/protocol"
 	cid "github.com/ipfs/go-cid"
 )
@@ -43,6 +44,15 @@ type Diagnostics interface {
 type MerkleDAGProfile interface {
 	PostMerkleDAGResolve(context.Context, []byte) ([]byte, error)
 	PostMerkleDAGRead(context.Context, []byte) ([]byte, error)
+	PostMerkleDAGCARRead(context.Context, []byte) ([]byte, error)
+}
+
+// ClientRoot is the untrusted stateful-writer transport. Implementations
+// return complete state candidates and exact durability receipts; callers
+// independently verify both and keep trust promotion separate.
+type ClientRoot interface {
+	FetchUpdateView(context.Context, cid.Cid, *protocol.UpdateViewBounds) (*UpdateViewResponse, error)
+	SubmitClientRoot(context.Context, mutation.ClientRootBundle) (*ClientRootResponse, error)
 }
 
 var (
@@ -51,4 +61,5 @@ var (
 	_ CAS              = (*Client)(nil)
 	_ Diagnostics      = (*Client)(nil)
 	_ MerkleDAGProfile = (*Client)(nil)
+	_ ClientRoot       = (*Client)(nil)
 )

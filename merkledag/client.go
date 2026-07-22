@@ -10,6 +10,7 @@ import (
 type ProfileTransport interface {
 	PostMerkleDAGResolve(context.Context, []byte) ([]byte, error)
 	PostMerkleDAGRead(context.Context, []byte) ([]byte, error)
+	PostMerkleDAGCARRead(context.Context, []byte) ([]byte, error)
 }
 
 // Client owns the Merkle DAG compatibility profile. It replays CID/link
