@@ -5,7 +5,7 @@ go 1.25.7
 require (
 	github.com/Microsoft/go-winio v0.6.2
 	github.com/crackcomm/go-gitignore v0.0.0-20241020182519-7843d2ba8fdf
-	github.com/dewebprotocol/malt v0.0.7-0.20260722075700-f9bf36cdcef0
+	github.com/dewebprotocol/malt v0.0.7-0.20260723022756-6c27d58b07d0
 	github.com/ipfs/boxo v0.41.0
 	github.com/ipfs/go-block-format v0.2.4
 	github.com/ipfs/go-cid v0.6.2
@@ -14,6 +14,7 @@ require (
 	github.com/ipld/go-ipld-prime v0.24.0
 	github.com/multiformats/go-multibase v0.3.0
 	github.com/multiformats/go-multihash v0.2.3
+	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
 	github.com/spf13/cobra v1.10.2
 	golang.org/x/sys v0.46.0
 )
@@ -53,7 +54,6 @@ require (
 	github.com/multiformats/go-varint v0.1.0 // indirect
 	github.com/petar/GoLLRB v0.0.0-20210522233825-ae3b015fd3e9 // indirect
 	github.com/polydawn/refmt v0.90.0 // indirect
-	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2 // indirect
 	github.com/spaolacci/murmur3 v1.1.0 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/whyrusleeping/cbor v0.0.0-20171005072247-63513f603b11 // indirect

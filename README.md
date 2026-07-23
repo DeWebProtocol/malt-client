@@ -25,9 +25,9 @@ independent `malt-client` release tag yet; build from a pinned commit.
 
 The client boundary refactor is merged on `main` at `2ac844cfeeb5`. The current
 evaluation writer depends on the MALT core changes proposed in
-[PR #174](https://github.com/DeWebProtocol/malt/pull/174) at
-`f9bf36cdcef0`; `go.mod` pins that exact development revision as
-`v0.0.7-0.20260722075700-f9bf36cdcef0`. Cross-repository verification also uses
+[PR #174](https://github.com/DeWebProtocol/malt/pull/174), currently stacked on
+Core PR #175, at `6c27d58b07d0`; `go.mod` pins that exact development revision
+as `v0.0.7-0.20260723022756-6c27d58b07d0`. Cross-repository verification also uses
 the exact checkout through a pinned `go.work` overlay. This provenance does not
 claim that PR #174 has merged or that MALT core v0.0.7 has been released.
 
