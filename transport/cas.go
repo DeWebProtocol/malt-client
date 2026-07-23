@@ -53,7 +53,7 @@ func (c *Client) PutBatch(ctx context.Context, blocks []Block) ([]PutBatchResult
 			Status string `json:"status"`
 		} `json:"results"`
 	}
-	if err := c.do(ctx, "POST", "/v1/cas/batch", nil, request, &response); err != nil {
+	if err := c.doNative(ctx, "POST", "/v1/cas/batch", nil, request, &response); err != nil {
 		return nil, err
 	}
 	if response.Profile != CASPutBatchProfile || len(response.Results) != len(blocks) {
@@ -101,7 +101,7 @@ func (c *Client) HasBatchDetailed(ctx context.Context, keys []cid.Cid) ([]HasBat
 			Present bool   `json:"present"`
 		} `json:"results"`
 	}
-	if err := c.do(ctx, "POST", "/v1/cas/has", nil, request, &response); err != nil {
+	if err := c.doNative(ctx, "POST", "/v1/cas/has", nil, request, &response); err != nil {
 		return nil, err
 	}
 	if response.Profile != CASHasBatchProfile || len(response.Results) != len(keys) {

@@ -20,7 +20,9 @@ func gatewayClient() (*client.Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	return client.New(client.Options{BaseURL: cfg.GatewayBaseURL()})
+	return client.New(client.Options{
+		BaseURL: cfg.GatewayBaseURL(), TenantBearerToken: cfg.Gateway.APIKey, BucketID: cfg.Gateway.Bucket,
+	})
 }
 
 func daemonCommandError(err error) error {

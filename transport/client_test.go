@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/dewebprotocol/malt-client/internal/cas"
@@ -43,7 +44,7 @@ func TestClientExposesFixedMerkleDAGRoutesWithoutArbitraryProfileEscapeHatch(t *
 	}
 }
 
-func TestPublicClientUsesGenericContractsAndBindsCASBytes(t *testing.T) {
+func TestPublicClientUsesGenericContractsAndBindsCASWrites(t *testing.T) {
 	root := mustBlockCID(t, []byte("root"))
 	target := mustBlockCID(t, []byte("target"))
 	payload := []byte("payload")
@@ -66,8 +67,6 @@ func TestPublicClientUsesGenericContractsAndBindsCASBytes(t *testing.T) {
 			}
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(map[string]string{"cid": payloadCID.String()})
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/cas/"+payloadCID.String():
-			_, _ = w.Write(payload)
 		default:
 			http.NotFound(w, r)
 		}
@@ -92,12 +91,29 @@ func TestPublicClientUsesGenericContractsAndBindsCASBytes(t *testing.T) {
 	if !put.Equals(payloadCID) {
 		t.Fatalf("Put = %s, want %s", put, payloadCID)
 	}
-	got, err := transport.Get(t.Context(), payloadCID)
+}
+
+func TestUnscopedClientRejectsSingleValueCASReadsWithoutHTTP(t *testing.T) {
+	payloadCID := mustBlockCID(t, []byte("payload"))
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
+		http.Error(w, "unexpected request", http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	transport, err := client.NewWithBaseURL(server.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(got) != string(payload) {
-		t.Fatalf("Get = %q", got)
+	if _, err := transport.Get(t.Context(), payloadCID); err == nil || !strings.Contains(err.Error(), "managed Bucket") {
+		t.Fatalf("unscoped Get error = %v", err)
+	}
+	if _, err := transport.Has(t.Context(), payloadCID); err == nil || !strings.Contains(err.Error(), "managed Bucket") {
+		t.Fatalf("unscoped Has error = %v", err)
+	}
+	if requests != 0 {
+		t.Fatalf("unscoped Get/Has sent %d HTTP requests", requests)
 	}
 }
 
@@ -107,9 +123,9 @@ func TestClientRejectsOversizedAndTrailingResponses(t *testing.T) {
 		switch r.URL.Path {
 		case "/healthz":
 			_, _ = io.WriteString(w, `{"status":"ok"}{"trailing":true}`)
-		case "/v1/cas/" + payloadCID.String():
+		case "/v1/buckets/bkt_one/cas/" + payloadCID.String():
 			_, _ = w.Write(bytesOf('x', 17))
-		case "/v1/resolve":
+		case "/v1/buckets/bkt_one/resolve":
 			w.WriteHeader(http.StatusBadGateway)
 			_, _ = w.Write(bytesOf('e', 9))
 		default:
@@ -118,7 +134,8 @@ func TestClientRejectsOversizedAndTrailingResponses(t *testing.T) {
 	}))
 	defer server.Close()
 	transport, err := client.New(client.Options{
-		BaseURL: server.URL, MaxJSONResponseBytes: 64, MaxBlobResponseBytes: 16, MaxErrorResponseBytes: 8,
+		BaseURL: server.URL, TenantBearerToken: "tenant-secret", BucketID: "bkt_one",
+		MaxJSONResponseBytes: 64, MaxBlobResponseBytes: 16, MaxErrorResponseBytes: 8,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -158,7 +175,7 @@ func TestGetClassifiesOnlyHTTPNotFoundAsCASNotFound(t *testing.T) {
 	}))
 	defer server.Close()
 
-	transport, err := client.NewWithBaseURL(server.URL)
+	transport, err := client.New(client.Options{BaseURL: server.URL, TenantBearerToken: "tenant-secret", BucketID: "bkt_one"})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -33,6 +33,10 @@ func (e *Error) Error() string {
 type Options struct {
 	BaseURL    string
 	HTTPClient *http.Client
+	// TenantBearerToken authenticates managed Bucket routes. BucketID selects
+	// the Bucket-scoped native MALT and CAS endpoints.
+	TenantBearerToken string
+	BucketID          string
 	// OperatorBearerToken is sent only by MetricsWithStorage. Non-loopback HTTP
 	// base URLs are rejected when it is configured, and credentialed redirects
 	// are never followed.
@@ -54,6 +58,8 @@ type Client struct {
 	baseURL               string
 	http                  *http.Client
 	operatorBearerToken   string
+	tenantBearerToken     string
+	bucketID              string
 	maxJSONResponseBytes  int64
 	maxBlobResponseBytes  int64
 	maxErrorResponseBytes int64
@@ -76,6 +82,14 @@ func New(opts Options) (*Client, error) {
 	if operatorToken != "" && parsed.Scheme != "https" && !isLoopbackGatewayHost(parsed.Hostname()) {
 		return nil, fmt.Errorf("operator bearer token requires HTTPS or a loopback HTTP gateway base URL")
 	}
+	tenantToken := strings.TrimSpace(opts.TenantBearerToken)
+	bucketID := strings.TrimSpace(opts.BucketID)
+	if bucketID != "" && tenantToken == "" {
+		return nil, fmt.Errorf("managed Bucket ID requires a tenant bearer token")
+	}
+	if tenantToken != "" && parsed.Scheme != "https" && !isLoopbackGatewayHost(parsed.Hostname()) {
+		return nil, fmt.Errorf("tenant bearer token requires HTTPS or a loopback HTTP gateway base URL")
+	}
 	maxJSON, err := responseLimit(opts.MaxJSONResponseBytes, DefaultMaxJSONResponseBytes, "JSON")
 	if err != nil {
 		return nil, err
@@ -94,6 +108,7 @@ func New(opts Options) (*Client, error) {
 	}
 	return &Client{
 		baseURL: baseURL, http: httpClient, operatorBearerToken: operatorToken,
+		tenantBearerToken: tenantToken, bucketID: bucketID,
 		maxJSONResponseBytes: maxJSON, maxBlobResponseBytes: maxBlob, maxErrorResponseBytes: maxError,
 	}, nil
 }
@@ -123,7 +138,7 @@ func (c *Client) PutWithCodec(ctx context.Context, data []byte, codec uint64) (c
 	var response struct {
 		CID string `json:"cid"`
 	}
-	if err := c.doRaw(ctx, http.MethodPost, "/v1/cas", map[string]string{
+	if err := c.doRawNative(ctx, http.MethodPost, "/v1/cas", map[string]string{
 		"codec": strconv.FormatUint(cas.NormalizeCodec(codec), 10),
 	}, "application/octet-stream", bytes.NewReader(data), &response); err != nil {
 		return cid.Undef, err
@@ -144,7 +159,10 @@ func (c *Client) PutWithCodec(ctx context.Context, data []byte, codec uint64) (c
 
 // Get reads one immutable payload and validates its CID before returning it.
 func (c *Client) Get(ctx context.Context, key cid.Cid) ([]byte, error) {
-	u, err := c.endpoint("/v1/cas/" + url.PathEscape(key.String()))
+	if c == nil || c.bucketID == "" {
+		return nil, fmt.Errorf("single-value CAS Get requires a configured managed Bucket")
+	}
+	u, err := c.endpoint(c.nativeRoute("/v1/cas/" + url.PathEscape(key.String())))
 	if err != nil {
 		return nil, err
 	}
@@ -152,7 +170,7 @@ func (c *Client) Get(ctx context.Context, key cid.Cid) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	resp, err := c.http.Do(req)
+	resp, err := c.send(req, true)
 	if err != nil {
 		return nil, err
 	}
@@ -177,7 +195,10 @@ func (c *Client) Get(ctx context.Context, key cid.Cid) ([]byte, error) {
 
 // Has checks whether the gateway CAS contains a payload.
 func (c *Client) Has(ctx context.Context, key cid.Cid) (bool, error) {
-	u, err := c.endpoint("/v1/cas/" + url.PathEscape(key.String()))
+	if c == nil || c.bucketID == "" {
+		return false, fmt.Errorf("single-value CAS Has requires a configured managed Bucket")
+	}
+	u, err := c.endpoint(c.nativeRoute("/v1/cas/" + url.PathEscape(key.String())))
 	if err != nil {
 		return false, err
 	}
@@ -185,7 +206,7 @@ func (c *Client) Has(ctx context.Context, key cid.Cid) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	resp, err := c.http.Do(req)
+	resp, err := c.send(req, true)
 	if err != nil {
 		return false, err
 	}
@@ -206,7 +227,7 @@ func (c *Client) Resolve(ctx context.Context, request protocol.ResolveRequest) (
 		return nil, err
 	}
 	var result protocol.ResolveResult
-	if err := c.do(ctx, http.MethodPost, "/v1/resolve", nil, request, &result); err != nil {
+	if err := c.doNative(ctx, http.MethodPost, "/v1/resolve", nil, request, &result); err != nil {
 		return nil, err
 	}
 	if err := result.Validate(); err != nil {
@@ -227,7 +248,7 @@ func (c *Client) Read(ctx context.Context, request protocol.ReadRequest) (*proto
 		return nil, err
 	}
 	var result protocol.ReadResult
-	if err := c.do(ctx, http.MethodPost, "/v1/read", nil, request, &result); err != nil {
+	if err := c.doNative(ctx, http.MethodPost, "/v1/read", nil, request, &result); err != nil {
 		return nil, err
 	}
 	if err := result.Validate(); err != nil {
@@ -263,7 +284,7 @@ func (c *Client) DiagnoseRead(ctx context.Context, value protocol.ReadVerificati
 // semantic mutation. The returned root is always a candidate.
 func (c *Client) ApplyRootSemanticMutation(ctx context.Context, root string, request *SemanticMutationRequest) (*SemanticMutationResponse, error) {
 	var response SemanticMutationResponse
-	if err := c.do(ctx, http.MethodPost, "/v1/roots/"+url.PathEscape(root)+"/mutations", nil, request, &response); err != nil {
+	if err := c.doNative(ctx, http.MethodPost, "/v1/roots/"+url.PathEscape(root)+"/mutations", nil, request, &response); err != nil {
 		return nil, err
 	}
 	return &response, nil
@@ -274,7 +295,7 @@ func (c *Client) ApplyRootSemanticMutation(ctx context.Context, root string, req
 func (c *Client) CreateRootStructure(ctx context.Context, arcs map[string]string) (*CreateStructureResponse, error) {
 	var response CreateStructureResponse
 	request := CreateStructureRequest{Arcs: arcs}
-	if err := c.do(ctx, http.MethodPost, "/v1/roots", nil, &request, &response); err != nil {
+	if err := c.doNative(ctx, http.MethodPost, "/v1/roots", nil, &request, &response); err != nil {
 		return nil, err
 	}
 	return &response, nil
@@ -310,21 +331,44 @@ func (c *Client) endpoint(route string) (*url.URL, error) {
 	return u, nil
 }
 
+func (c *Client) nativeRoute(route string) string {
+	if c == nil || c.bucketID == "" {
+		return route
+	}
+	return "/v1/buckets/" + url.PathEscape(c.bucketID) + strings.TrimPrefix(route, "/v1")
+}
+
 func (c *Client) responseError(resp *http.Response) error {
 	data, err := readBounded(resp.Body, c.maxErrorResponseBytes, "gateway error response")
 	if err != nil {
 		return &Error{StatusCode: resp.StatusCode, Message: err.Error()}
 	}
+	return responseErrorData(resp.StatusCode, data)
+}
+
+func responseErrorData(statusCode int, data []byte) error {
 	var apiErr errorResponse
 	if err := json.Unmarshal(data, &apiErr); err == nil {
 		if message := apiErr.messageText(); message != "" {
-			return &Error{StatusCode: resp.StatusCode, Message: message}
+			return &Error{StatusCode: statusCode, Message: message}
 		}
 	}
-	return &Error{StatusCode: resp.StatusCode, Message: http.StatusText(resp.StatusCode)}
+	return &Error{StatusCode: statusCode, Message: http.StatusText(statusCode)}
 }
 
 func (c *Client) do(ctx context.Context, method, route string, query map[string]string, body, out any) error {
+	return c.doWithAuth(ctx, method, route, query, body, out, false)
+}
+
+func (c *Client) doNative(ctx context.Context, method, route string, query map[string]string, body, out any) error {
+	return c.doWithAuth(ctx, method, c.nativeRoute(route), query, body, out, c.bucketID != "")
+}
+
+func (c *Client) doTenant(ctx context.Context, method, route string, body, out any) error {
+	return c.doWithAuth(ctx, method, route, nil, body, out, true)
+}
+
+func (c *Client) doWithAuth(ctx context.Context, method, route string, query map[string]string, body, out any, tenantAuth bool) error {
 	u, err := c.endpoint(route)
 	if err != nil {
 		return err
@@ -349,10 +393,21 @@ func (c *Client) do(ctx context.Context, method, route string, query map[string]
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	if tenantAuth {
+		return c.executeTenant(req, out)
+	}
 	return c.execute(req, out)
 }
 
 func (c *Client) doRaw(ctx context.Context, method, route string, query map[string]string, contentType string, body io.Reader, out any) error {
+	return c.doRawWithAuth(ctx, method, route, query, contentType, body, out, false)
+}
+
+func (c *Client) doRawNative(ctx context.Context, method, route string, query map[string]string, contentType string, body io.Reader, out any) error {
+	return c.doRawWithAuth(ctx, method, c.nativeRoute(route), query, contentType, body, out, c.bucketID != "")
+}
+
+func (c *Client) doRawWithAuth(ctx context.Context, method, route string, query map[string]string, contentType string, body io.Reader, out any, tenantAuth bool) error {
 	u, err := c.endpoint(route)
 	if err != nil {
 		return err
@@ -368,6 +423,9 @@ func (c *Client) doRaw(ctx context.Context, method, route string, query map[stri
 	}
 	if contentType != "" {
 		req.Header.Set("Content-Type", contentType)
+	}
+	if tenantAuth {
+		return c.executeTenant(req, out)
 	}
 	return c.execute(req, out)
 }
@@ -386,7 +444,7 @@ func (c *Client) PostMerkleDAGRead(ctx context.Context, request []byte) ([]byte,
 }
 
 func (c *Client) postProfileJSON(ctx context.Context, route string, body []byte) ([]byte, error) {
-	u, err := c.endpoint(route)
+	u, err := c.endpoint(c.nativeRoute(route))
 	if err != nil {
 		return nil, err
 	}
@@ -395,7 +453,7 @@ func (c *Client) postProfileJSON(ctx context.Context, route string, body []byte)
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := c.http.Do(req)
+	resp, err := c.send(req, c.bucketID != "")
 	if err != nil {
 		return nil, err
 	}
@@ -408,6 +466,29 @@ func (c *Client) postProfileJSON(ctx context.Context, route string, body []byte)
 
 func (c *Client) execute(req *http.Request, out any) error {
 	return c.executeWithClient(c.http, req, out)
+}
+
+func (c *Client) executeTenant(req *http.Request, out any) error {
+	if c.tenantBearerToken == "" {
+		return fmt.Errorf("tenant bearer token is not configured")
+	}
+	req.Header.Set("Authorization", "Bearer "+c.tenantBearerToken)
+	return c.executeCredentialed(req, out)
+}
+
+func (c *Client) send(req *http.Request, tenantAuth bool) (*http.Response, error) {
+	if !tenantAuth {
+		return c.http.Do(req)
+	}
+	if c.tenantBearerToken == "" {
+		return nil, fmt.Errorf("tenant bearer token is not configured")
+	}
+	req.Header.Set("Authorization", "Bearer "+c.tenantBearerToken)
+	httpClient := *c.http
+	httpClient.CheckRedirect = func(next *http.Request, _ []*http.Request) error {
+		return fmt.Errorf("refusing credentialed gateway redirect to %s", next.URL.Redacted())
+	}
+	return httpClient.Do(req)
 }
 
 func (c *Client) executeCredentialed(req *http.Request, out any) error {

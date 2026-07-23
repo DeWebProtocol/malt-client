@@ -8,6 +8,7 @@ that must not be part of the application-neutral authentication core:
 - application-path parsing and UnixFS materialization;
 - optional IPFS-compatible Merkle DAG UnixFS import;
 - calls to a remote MALT gateway;
+- durable managed-Bucket base/remote/stash synchronization state;
 - local verification of resolve/read proofs and returned payload bytes;
 - a user-owned daemon control plane over a private Unix socket or Windows
   named pipe.
@@ -48,6 +49,30 @@ Start a compatible gateway, then initialize the local client:
 ./bin/malt daemon start
 ./bin/malt daemon status
 ```
+
+For a managed Gateway, set `gateway.api_key` and `gateway.bucket` in the
+generated `0600` config, then observe the initial head before producing or
+pushing local work:
+
+```bash
+./bin/malt bucket list
+./bin/malt bucket pull
+./bin/malt bucket status
+./bin/malt add ./local-change --root <observed-head-root>
+./bin/malt bucket push <candidate-root-cid> -m "update docs"
+./bin/malt bucket branches
+```
+
+In Bucket mode, native `malt add` and `malt rm` capture the current base before
+materialization and stage the resulting candidate in
+`~/.malt-client/buckets.json`. `bucket push` refuses an unstaged candidate,
+fetches the remote head without changing the recorded base, and reuses the
+same push ID across retries. For candidates created by another tool, use
+`bucket stage <candidate> --base-commit ... --base-root ... --base-revision ...`
+with the base captured before materialization. The Gateway may fast-forward,
+auto-merge independent map changes, or return a preserved conflict branch.
+Bucket heads remain untrusted observations and are never promoted in
+`roots.json` by this workflow.
 
 Trust an independently obtained root, resolve a UnixFS path, and add a local
 tree:
@@ -98,6 +123,7 @@ The public Go API is importable as:
 ```go
 import (
     "github.com/dewebprotocol/malt-client/application"
+	"github.com/dewebprotocol/malt-client/bucketsync"
     "github.com/dewebprotocol/malt-client/merkledag"
     "github.com/dewebprotocol/malt-client/transport"
     "github.com/dewebprotocol/malt-client/trust"
@@ -126,6 +152,16 @@ file writes, and `RemovePath` operations. The UnixFS facade requires
 a caller-selected root, verifies ProofLists locally, enforces resolve-to-read
 continuity, and verifies raw, manifest, and measured-list payload bytes.
 
+With `transport.Options{TenantBearerToken: ..., BucketID: ...}`, native
+MALT/CAS calls use the authenticated Bucket routes. Package `bucketsync`
+persists base, observed remote head, and local stashes under a cross-process
+lock and implements stash-before-fetch push ordering. It deliberately does not
+import or mutate package `trust`.
+
+Single-value CAS `Get`/`Has` require that authenticated Bucket selection. The
+transport does not attempt the Gateway's removed public raw-CAS GET/HEAD route;
+unscoped calls fail locally without sending a request.
+
 Package `merkledag` owns the gateway's distinct compatibility profiles over a
 narrow fixed-route profile transport. `ResolveMerkleDAGVerified` and
 `ReadMerkleDAGVerified` recompute every
@@ -133,7 +169,9 @@ evidence block CID and replay the UnixFS link traversal locally. These results
 are never represented as MALT ProofLists.
 
 The transport exposes only fixed Merkle DAG resolve/read route capabilities;
-applications cannot supply an arbitrary Gateway route and JSON body.
+applications cannot supply an arbitrary Gateway route and JSON body. When a
+Bucket is configured, these calls use its authenticated compatibility routes
+and cannot fall back to the public CAS namespace.
 
 The transport exposes bounded ordered CAS `PutBatch`/`HasBatch` and a
 typed diagnostic metrics snapshot. Package `merkledag/ipld` restores the
@@ -152,6 +190,7 @@ Run `malt <command> --help` for the exact flags and output contract.
 
 Default state lives under `~/.malt-client/`. The generated configuration points
 to `http://127.0.0.1:8080`; edit `gateway.base_url` to select another gateway.
+Tenant bearer credentials require HTTPS except for loopback development.
 
 ## Trust model
 
