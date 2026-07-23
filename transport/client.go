@@ -162,6 +162,25 @@ func (c *Client) Get(ctx context.Context, key cid.Cid) ([]byte, error) {
 	if c == nil || c.bucketID == "" {
 		return nil, fmt.Errorf("single-value CAS Get requires a configured managed Bucket")
 	}
+	data, err := c.GetRawForLocalCIDVerification(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	want, err := key.Prefix().Sum(data)
+	if err != nil || !want.Equals(key) {
+		return nil, fmt.Errorf("gateway CAS body does not match CID %s", key)
+	}
+	return data, nil
+}
+
+// GetRawForLocalCIDVerification performs one bounded CAS GET without hashing
+// the response. It exists only for protocols such as the paper Direct-CAS
+// evaluator whose sole local verifier must own and time the CID hash exactly
+// once. Ordinary callers must use Get, which remains locally verified.
+func (c *Client) GetRawForLocalCIDVerification(ctx context.Context, key cid.Cid) ([]byte, error) {
+	if !key.Defined() {
+		return nil, fmt.Errorf("gateway CAS key is undefined")
+	}
 	u, err := c.endpoint(c.nativeRoute("/v1/cas/" + url.PathEscape(key.String())))
 	if err != nil {
 		return nil, err
@@ -170,7 +189,7 @@ func (c *Client) Get(ctx context.Context, key cid.Cid) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	resp, err := c.send(req, true)
+	resp, err := c.send(req, c.bucketID != "")
 	if err != nil {
 		return nil, err
 	}
@@ -185,10 +204,6 @@ func (c *Client) Get(ctx context.Context, key cid.Cid) ([]byte, error) {
 	data, err := readBounded(resp.Body, c.maxBlobResponseBytes, "gateway CAS body")
 	if err != nil {
 		return nil, err
-	}
-	want, err := key.Prefix().Sum(data)
-	if err != nil || !want.Equals(key) {
-		return nil, fmt.Errorf("gateway CAS body does not match CID %s", key)
 	}
 	return data, nil
 }
@@ -441,6 +456,33 @@ func (c *Client) PostMerkleDAGResolve(ctx context.Context, request []byte) ([]by
 // compatibility route. It cannot be used to address arbitrary gateway routes.
 func (c *Client) PostMerkleDAGRead(ctx context.Context, request []byte) ([]byte, error) {
 	return c.postProfileJSON(ctx, "/v1/compat/merkledag/read", request)
+}
+
+// PostMerkleDAGCARRead sends one request to the fixed selective-CAR route.
+// The response remains untrusted; this method only bounds the body and checks
+// the route's exact CARv1 media type before the merkledag package decodes it.
+func (c *Client) PostMerkleDAGCARRead(ctx context.Context, request []byte) ([]byte, error) {
+	u, err := c.endpoint("/v1/compat/merkledag/car/read")
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u.String(), bytes.NewReader(request))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, c.responseError(resp)
+	}
+	if got := resp.Header.Get("Content-Type"); got != "application/vnd.ipld.car; version=1" {
+		return nil, fmt.Errorf("unsupported Gateway Merkle-DAG CAR content type %q", got)
+	}
+	return readBounded(resp.Body, c.maxBlobResponseBytes, "Gateway Merkle-DAG CAR response")
 }
 
 func (c *Client) postProfileJSON(ctx context.Context, route string, body []byte) ([]byte, error) {

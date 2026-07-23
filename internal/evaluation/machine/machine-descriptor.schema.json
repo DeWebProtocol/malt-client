@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dewebprotocol.github.io/malt/schemas/malt-evaluation-machine-descriptor-v1.json",
+  "title": "MALT paper evaluation machine descriptor",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "id", "identity", "classification", "classification_evidence_source"],
+  "properties": {
+    "schema_version": {"const": "malt-evaluation-machine-descriptor/v1"},
+    "id": {"type": "string", "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"},
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["os", "architecture", "cpu_model", "cpu_model_source", "board_model", "board_model_source", "logical_cores", "logical_cores_source", "memory_bytes", "memory_source"],
+      "properties": {
+        "os": {"type": "string", "minLength": 1, "maxLength": 512},
+        "architecture": {"type": "string", "minLength": 1, "maxLength": 512},
+        "cpu_model": {"type": "string", "minLength": 1, "maxLength": 512},
+        "cpu_model_source": {"type": "string", "minLength": 1, "maxLength": 512},
+        "board_model": {"type": "string", "minLength": 1, "maxLength": 512},
+        "board_model_source": {"type": "string", "minLength": 1, "maxLength": 512},
+        "logical_cores": {"type": "integer", "minimum": 1, "maximum": 4096},
+        "logical_cores_source": {"const": "go-runtime:NumCPU"},
+        "memory_bytes": {"type": "integer", "minimum": 67108864},
+        "memory_source": {"const": "linux:/proc/meminfo:MemTotal"}
+      }
+    },
+    "classification": {"enum": ["general-purpose", "low-power-arm"]},
+    "classification_evidence_source": {"type": "string", "minLength": 1, "maxLength": 1024}
+  }
+}

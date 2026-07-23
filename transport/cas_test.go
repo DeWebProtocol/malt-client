@@ -2,6 +2,7 @@ package transport_test
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -17,6 +18,8 @@ import (
 func TestClientBatchCASAndMetricsContracts(t *testing.T) {
 	blocks := []client.Block{{Data: []byte("first"), Codec: cid.Raw}, {Data: []byte("second"), Codec: cid.Raw}}
 	keys := make([]cid.Cid, len(blocks))
+	var putRequestBytes atomic.Uint64
+	var putResponseBytes atomic.Uint64
 	for i, block := range blocks {
 		var err error
 		keys[i], err = clientcas.CIDForBlock(clientcas.Block{Data: block.Data, Codec: block.Codec})
@@ -27,21 +30,31 @@ func TestClientBatchCASAndMetricsContracts(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/cas/batch":
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			putRequestBytes.Store(uint64(len(body)))
 			var request struct {
 				Profile string         `json:"profile"`
 				Blocks  []client.Block `json:"blocks"`
 			}
-			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			if err := json.Unmarshal(body, &request); err != nil {
 				t.Fatal(err)
 			}
 			if request.Profile != client.CASPutBatchProfile || len(request.Blocks) != 2 {
 				t.Fatalf("put-batch request = %#v", request)
 			}
-			w.WriteHeader(http.StatusCreated)
-			_ = json.NewEncoder(w).Encode(map[string]any{
+			response, err := json.Marshal(map[string]any{
 				"profile": client.CASPutBatchProfile,
 				"results": []map[string]string{{"cid": keys[0].String(), "status": "stored"}, {"cid": keys[1].String(), "status": "stored"}},
 			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			putResponseBytes.Store(uint64(len(response)))
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write(response)
 		case "/v1/cas/has":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"profile": client.CASHasBatchProfile,
@@ -69,12 +82,17 @@ func TestClientBatchCASAndMetricsContracts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	put, err := transport.PutBatch(t.Context(), blocks)
+	measurement, err := transport.PutBatchMeasured(t.Context(), blocks)
 	if err != nil {
 		t.Fatal(err)
 	}
+	put := measurement.Results
 	if len(put) != 2 || !put[1].CID.Equals(keys[1]) {
 		t.Fatalf("put results = %#v", put)
+	}
+	if measurement.RoundTripNS == 0 || measurement.RequestWireBytes != putRequestBytes.Load() ||
+		measurement.ResponseWireBytes != putResponseBytes.Load() || measurement.RequestWireBytes == measurement.ResponseWireBytes {
+		t.Fatalf("put directional measurement = %#v, request=%d response=%d", measurement, putRequestBytes.Load(), putResponseBytes.Load())
 	}
 	has, err := transport.HasBatchDetailed(t.Context(), []cid.Cid{keys[1], keys[0]})
 	if err != nil {
@@ -90,6 +108,44 @@ func TestClientBatchCASAndMetricsContracts(t *testing.T) {
 	metrics, err = transport.MetricsWithStorage(t.Context())
 	if err != nil || metrics.Storage == nil || metrics.Storage.LogicalBytes != 42 {
 		t.Fatalf("metrics with storage = %#v err=%v", metrics, err)
+	}
+}
+
+func TestPutBatchMeasuredUsesManagedBucketRouteAndCredential(t *testing.T) {
+	block := client.Block{Data: []byte("bucket-payload"), Codec: cid.Raw}
+	key, err := clientcas.CIDForBlock(clientcas.Block{Data: block.Data, Codec: block.Codec})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/buckets/bkt_one/cas/batch" {
+			http.NotFound(w, r)
+			return
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer tenant-secret" {
+			t.Fatalf("Authorization = %q", got)
+		}
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"profile": client.CASPutBatchProfile,
+			"results": []map[string]string{{"cid": key.String(), "status": "stored"}},
+		})
+	}))
+	defer server.Close()
+
+	transport, err := client.New(client.Options{
+		BaseURL: server.URL, TenantBearerToken: "tenant-secret", BucketID: "bkt_one",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	measurement, err := transport.PutBatchMeasured(t.Context(), []client.Block{block})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(measurement.Results) != 1 || !measurement.Results[0].CID.Equals(key) ||
+		measurement.RequestWireBytes == 0 || measurement.ResponseWireBytes == 0 || measurement.RoundTripNS == 0 {
+		t.Fatalf("measurement = %#v", measurement)
 	}
 }
 

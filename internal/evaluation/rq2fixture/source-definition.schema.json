@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dewebprotocol.github.io/malt/schemas/malt-rq2-source-definition-v1.json",
+  "title": "MALT RQ2 source definition",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "fixture_id", "mutation_seed_sha256", "direct_files", "list_files", "operations"],
+  "properties": {
+    "schema_version": {"const": "malt-rq2-source-definition/v1"},
+    "fixture_id": {"type": "string", "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"},
+    "mutation_seed_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "direct_files": {"type": "array", "maxItems": 4096, "items": {"$ref": "#/$defs/direct"}},
+    "list_files": {"type": "array", "maxItems": 4096, "items": {"$ref": "#/$defs/list"}},
+    "operations": {"type": "array", "minItems": 1, "maxItems": 256, "items": {"oneOf": [
+      {"$ref": "#/$defs/direct_replace"}, {"$ref": "#/$defs/direct_insert"}, {"$ref": "#/$defs/direct_delete"},
+      {"$ref": "#/$defs/direct_move"}, {"$ref": "#/$defs/list_append"}, {"$ref": "#/$defs/list_replace"},
+      {"$ref": "#/$defs/batch_insert"}, {"$ref": "#/$defs/document_edit"}
+    ]}}
+  },
+  "$defs": {
+    "direct": {
+      "type": "object", "additionalProperties": false, "required": ["path", "coordinate", "bytes"],
+      "properties": {"path": {"type": "string", "minLength": 1}, "coordinate": {"type": "string", "minLength": 1}, "bytes": {"type": "string", "contentEncoding": "base64"}}
+    },
+    "chunk": {
+      "type": "object", "additionalProperties": false, "required": ["index", "bytes"],
+      "properties": {"index": {"type": "integer", "minimum": 0}, "bytes": {"type": "string", "contentEncoding": "base64"}}
+    },
+    "list": {
+      "type": "object", "additionalProperties": false, "required": ["path", "coordinate", "chunk_size", "total_size", "chunks"],
+      "properties": {"path": {"type": "string", "minLength": 1}, "coordinate": {"type": "string", "minLength": 1}, "chunk_size": {"type": "integer", "minimum": 1}, "total_size": {"type": "integer", "minimum": 1}, "chunks": {"type": "array", "minItems": 1, "maxItems": 65536, "items": {"$ref": "#/$defs/chunk"}}}
+    },
+    "name": {"type": "string", "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"},
+    "path": {"type": "string", "minLength": 1},
+    "payload_bytes": {"type": "integer", "minimum": 1, "maximum": 67108864},
+    "batch_target": {
+      "type": "object", "additionalProperties": false, "required": ["path", "coordinate", "payload_bytes"],
+      "properties": {"path": {"$ref": "#/$defs/path"}, "coordinate": {"$ref": "#/$defs/path"}, "payload_bytes": {"$ref": "#/$defs/payload_bytes"}}
+    },
+    "direct_replace": {
+      "type": "object", "additionalProperties": false, "required": ["name", "kind", "source_path", "source_coordinate", "payload_bytes"],
+      "properties": {"name": {"$ref": "#/$defs/name"}, "kind": {"const": "direct-replace"}, "source_path": {"$ref": "#/$defs/path"}, "source_coordinate": {"$ref": "#/$defs/path"}, "payload_bytes": {"$ref": "#/$defs/payload_bytes"}}
+    },
+    "direct_insert": {
+      "type": "object", "additionalProperties": false, "required": ["name", "kind", "destination_path", "destination_coordinate", "payload_bytes"],
+      "properties": {"name": {"$ref": "#/$defs/name"}, "kind": {"const": "direct-insert"}, "destination_path": {"$ref": "#/$defs/path"}, "destination_coordinate": {"$ref": "#/$defs/path"}, "payload_bytes": {"$ref": "#/$defs/payload_bytes"}}
+    },
+    "direct_delete": {
+      "type": "object", "additionalProperties": false, "required": ["name", "kind", "source_path", "source_coordinate"],
+      "properties": {"name": {"$ref": "#/$defs/name"}, "kind": {"const": "direct-delete"}, "source_path": {"$ref": "#/$defs/path"}, "source_coordinate": {"$ref": "#/$defs/path"}}
+    },
+    "direct_move": {
+      "type": "object", "additionalProperties": false, "required": ["name", "kind", "source_path", "source_coordinate", "destination_path", "destination_coordinate"],
+      "properties": {"name": {"$ref": "#/$defs/name"}, "kind": {"const": "direct-move"}, "source_path": {"$ref": "#/$defs/path"}, "source_coordinate": {"$ref": "#/$defs/path"}, "destination_path": {"$ref": "#/$defs/path"}, "destination_coordinate": {"$ref": "#/$defs/path"}}
+    },
+    "list_append": {
+      "type": "object", "additionalProperties": false, "required": ["name", "kind", "source_path", "source_coordinate", "payload_bytes"],
+      "properties": {"name": {"$ref": "#/$defs/name"}, "kind": {"const": "list-append"}, "source_path": {"$ref": "#/$defs/path"}, "source_coordinate": {"$ref": "#/$defs/path"}, "payload_bytes": {"$ref": "#/$defs/payload_bytes"}}
+    },
+    "list_replace": {
+      "type": "object", "additionalProperties": false, "required": ["name", "kind", "source_path", "source_coordinate", "payload_bytes", "list_index"],
+      "properties": {"name": {"$ref": "#/$defs/name"}, "kind": {"const": "list-replace"}, "source_path": {"$ref": "#/$defs/path"}, "source_coordinate": {"$ref": "#/$defs/path"}, "payload_bytes": {"$ref": "#/$defs/payload_bytes"}, "list_index": {"type": "integer", "minimum": 0}}
+    },
+    "batch_insert": {
+      "type": "object", "additionalProperties": false, "required": ["name", "kind", "batch"],
+      "properties": {"name": {"$ref": "#/$defs/name"}, "kind": {"const": "batch-insert"}, "batch": {"type": "array", "minItems": 1, "maxItems": 64, "items": {"$ref": "#/$defs/batch_target"}}}
+    },
+    "document_edit": {
+      "type": "object", "additionalProperties": false, "required": ["name", "kind", "source_path", "source_coordinate", "payload_bytes"],
+      "properties": {"name": {"$ref": "#/$defs/name"}, "kind": {"const": "document-edit"}, "source_path": {"$ref": "#/$defs/path"}, "source_coordinate": {"$ref": "#/$defs/path"}, "payload_bytes": {"$ref": "#/$defs/payload_bytes"}}
+    }
+  }
+}

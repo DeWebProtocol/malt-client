@@ -23,12 +23,13 @@ This is an experimental, pre-v1 client. It currently provides the `malt` CLI,
 a local trusted-root daemon, and a UnixFS application adapter. There is no
 independent `malt-client` release tag yet; build from a pinned commit.
 
-The client boundary refactor is merged on `main` at `2ac844cfeeb5`. MALT core
-[PR #169](https://github.com/DeWebProtocol/malt/pull/169) is likewise merged at
-`68550e046804`. Until the next formal core release, this module still pins the
-development pseudo-version `v0.0.7-0.20260715095704-fc8cd2d1f071`; the
-cross-repository gate tests the merged core revision through an exact `go.work`
-overlay. Neither reference claims that MALT core v0.0.7 has been released.
+The client boundary refactor is merged on `main` at `2ac844cfeeb5`. The current
+evaluation writer depends on the MALT core changes proposed in
+[PR #174](https://github.com/DeWebProtocol/malt/pull/174), currently stacked on
+Core PR #175, at `6c27d58b07d0`; `go.mod` pins that exact development revision
+as `v0.0.7-0.20260723022756-6c27d58b07d0`. Cross-repository verification also uses
+the exact checkout through a pinned `go.work` overlay. This provenance does not
+claim that PR #174 has merged or that MALT core v0.0.7 has been released.
 
 ## Build
 
@@ -172,6 +173,79 @@ The transport exposes only fixed Merkle DAG resolve/read route capabilities;
 applications cannot supply an arbitrary Gateway route and JSON body. When a
 Bucket is configured, these calls use its authenticated compatibility routes
 and cannot fall back to the public CAS namespace.
+
+The evaluator-only `cmd/malt-eval-rq1-worker` keeps CAR and Direct-CAS replay
+inside this client repository. Each successful JSONL record brackets the real
+route request(s) with the Gateway's token-bound cache-observation lease,
+records live health/capability evidence, reports per-operation user/system CPU
+and process-lifetime peak RSS, and emits explicit zero values for inapplicable
+MALT server phases. Failed records never carry partial metrics or cache claims.
+
+The evaluator-only RQ2 workers exercise the real client-root session rather
+than a detached commitment microbenchmark. The native worker mutates a real
+temporary filesystem and observes scan, chunk, hash, update-view verification,
+normalization, Root computation, payload-CAS upload, bundle encoding, Gateway
+replay/persist, and local receipt checks. `mutation_total` is the inclusive
+client-observed latency and has `applicable=true`, `bytes=0`, and `count=1`.
+For native it begins immediately before update-view Load and ends after the
+exact durable receipt advances the writer; for browser it has the same boundary
+inside Go/WASM. It excludes the browser host/JS/CDP boundary, cold start, and
+post-image correctness oracle. Every mutation emits
+`taxonomy_profile=malt-rq2-metric-taxonomy/v1`. Its executable reconciliation
+contract distinguishes inclusive totals, exclusive mutation phases, nested
+diagnostics, browser/cold-start phases, and orthogonal CPU/memory resources;
+reports must select one compatible duration group instead of stacking all
+fields. Payload upload reports only the PutBatch request body and round trip;
+the client-root bundle reports request bytes, while receipt checking reports
+only response bytes. Bytes and counts are field-specific resource evidence and
+are never an additive phase decomposition (for example, update fetch and local
+verification both observe the same update-view bytes). Unclassified wall time
+remains an explicit residual under the inclusive total, not an invented phase.
+The `normalization` phase measures the canonical retained-view snapshot and
+semantic-intent planning performed by the application plus the writer SDK's
+view and intent normalization. Those application-owned durations are also
+included in `client_root_generation`; SDK digesting, bundle validation, and
+next-view construction remain measured residual work inside that inclusive
+subtotal. Evidence digests come from the exact canonical bundle prepared by
+the SDK, so evaluator workers do not repeat digest or normalization work merely
+to populate evidence fields.
+The browser worker drives the WASM boundary and reports cold download,
+instantiation, public-parameter loading, first mutation, steady-state mutation,
+JS/WASM crossings, CPU, and peak memory. Short-session runs use independently
+started cold and steady-baseline processes instead of arithmetically combining
+unrelated samples.
+
+`cmd/malt-eval-rq2-fixture-build` is the sole producer for the shared RQ2
+source fixture. It consumes one pinned source definition and two independently
+identified empty bootstrap-enabled Gateway origins, computes KZG and IPA Roots
+locally, uploads every payload, installs every map/list object through the
+secret evaluation bootstrap capability, and fetches and verifies both complete
+update views before publishing the fixture create-exclusively. The matching
+Gateway bootstrap controllers are sealed with those emitted Roots before their
+closed state directories are passed to the Gateway-owned semantic snapshot
+packer; an unverified fixture file alone is not a preloaded snapshot.
+
+The evaluator-only RQ3 workers replay the evaluator's portable source mutation
+stream through either the current MALT client/Gateway path or the Merkle
+DAG/HAMT comparison path. They emit exact attempted and newly-persisted object
+events by accounting category; the evaluator, not these workers, owns campaign
+matching, Git first-parent trace provenance, and physical reconciliation.
+The MALT adapter bootstraps one canonical empty top object outside the timed
+workload, then sends the frozen snapshot and every later commit through the
+same exact client-root product path. The setup Root remains retained: each
+commit reports one `non_workload_setup_roots_retained` in addition to
+`history_roots_retained`, which counts workload Roots only. In the accounting
+pass all durable setup CAS and Gateway allocations are attributed to the first
+snapshot commit with a `canonical-empty-setup:` cause prefix, so logical and
+physical state reconcile without charging setup work to snapshot latency. Its
+measured path retains an incremental output-free
+logical blueprint and delegates the only commitment computation to the writer;
+an independent full-build Root oracle runs after the timing boundary. The
+legacy `client_compute_wall_ns` field is the inclusive client-observed
+source-to-durable latency (payload upload and submission included). Gateway
+replay/persist are server-side diagnostics nested within that observation and
+must be reported separately rather than summed into it. These
+commands are benchmark process boundaries, not supported user CLI.
 
 The transport exposes bounded ordered CAS `PutBatch`/`HasBatch` and a
 typed diagnostic metrics snapshot. Package `merkledag/ipld` restores the

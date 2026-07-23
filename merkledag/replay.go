@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"sync"
+	"time"
 
 	merkledag "github.com/ipfs/boxo/ipld/merkledag"
 	unixfs "github.com/ipfs/boxo/ipld/unixfs"
@@ -26,7 +28,16 @@ type replayedMerkleDAGNode struct {
 	node ipld.Node
 }
 
-func replayMerkleDAGResolve(ctx context.Context, dag *evidenceDAG, rawRoot string, segments []string) (replayedMerkleDAGNode, error) {
+// replayBlockLoader is the narrow read boundary required by local Merkle-DAG
+// replay. Implementations may be backed by an in-memory evidence bundle or by
+// on-demand CAS GETs, but they must return bytes bound to the requested CID.
+// The DAG methods are needed only by the UnixFS resolver/reader.
+type replayBlockLoader interface {
+	ipld.DAGService
+	load(context.Context, cid.Cid) ([]byte, error)
+}
+
+func replayMerkleDAGResolve(ctx context.Context, dag replayBlockLoader, rawRoot string, segments []string) (replayedMerkleDAGNode, error) {
 	root, _ := cid.Parse(rawRoot)
 	current := root
 	remaining := append([]string(nil), segments...)
@@ -119,7 +130,15 @@ func resolveIPLDLink(codec uint64, raw []byte, segments []string) (cid.Cid, []st
 func isLinkIPLDCodec(codec uint64) bool { return codec == cid.DagCBOR || codec == cid.DagJSON }
 
 type evidenceDAG struct {
-	blocks map[string]blocks.Block
+	mu               sync.Mutex
+	blocks           map[string]blocks.Block
+	used             map[string]bool
+	loadCalls        uint64
+	cidVerifyNS      uint64
+	verifyNSByCID    map[string]uint64
+	payloadBindingNS uint64
+	payloadCounted   map[string]struct{}
+	inPayloadBinding bool
 }
 
 func newEvidenceDAG(evidence []MerkleDAGBlock) (*evidenceDAG, error) {
@@ -136,7 +155,12 @@ func newEvidenceDAG(evidence []MerkleDAGBlock) (*evidenceDAG, error) {
 		}
 		totalBytes += len(item.Data)
 	}
-	dag := &evidenceDAG{blocks: make(map[string]blocks.Block, len(evidence))}
+	dag := &evidenceDAG{
+		blocks:         make(map[string]blocks.Block, len(evidence)),
+		used:           make(map[string]bool, len(evidence)),
+		verifyNSByCID:  make(map[string]uint64, len(evidence)),
+		payloadCounted: make(map[string]struct{}),
+	}
 	for i, item := range evidence {
 		key, err := cid.Parse(item.CID)
 		if err != nil {
@@ -145,7 +169,9 @@ func newEvidenceDAG(evidence []MerkleDAGBlock) (*evidenceDAG, error) {
 		if item.Codec != key.Type() {
 			return nil, fmt.Errorf("Merkle-DAG evidence block %s codec %d does not match CID codec %d", key, item.Codec, key.Type())
 		}
-		block, err := blocks.NewBlockWithCid(item.Data, key)
+		verifyStarted := time.Now()
+		block, err := newVerifiedBlock(item.Data, key)
+		verifyNS := durationNanoseconds(time.Since(verifyStarted))
 		if err != nil {
 			return nil, fmt.Errorf("Merkle-DAG evidence bytes do not match CID %s: %w", key, err)
 		}
@@ -153,6 +179,8 @@ func newEvidenceDAG(evidence []MerkleDAGBlock) (*evidenceDAG, error) {
 			return nil, fmt.Errorf("duplicate Merkle-DAG evidence block %s", key)
 		}
 		dag.blocks[key.KeyString()] = block
+		dag.verifyNSByCID[key.KeyString()] = verifyNS
+		dag.cidVerifyNS += verifyNS
 	}
 	return dag, nil
 }
@@ -181,26 +209,59 @@ func (d *evidenceDAG) load(_ context.Context, key cid.Cid) ([]byte, error) {
 }
 
 func (d *evidenceDAG) loadBlock(key cid.Cid) (blocks.Block, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.loadCalls++
 	block, ok := d.blocks[key.KeyString()]
 	if !ok {
 		return nil, fmt.Errorf("Merkle-DAG evidence is missing block %s", key)
 	}
+	d.used[key.KeyString()] = true
+	if d.inPayloadBinding {
+		d.countPayloadBindingLocked(key)
+	}
 	return block, nil
 }
 
+func (d *evidenceDAG) beginPayloadBinding(target cid.Cid) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.inPayloadBinding = true
+	// Selective CAR validation hashes every supplied block before path replay.
+	// Attribute the already-verified target hash, then hashes for blocks first
+	// consumed by the UnixFS reader, without hashing any bytes a second time.
+	d.countPayloadBindingLocked(target)
+}
+
+func (d *evidenceDAG) endPayloadBinding() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.inPayloadBinding = false
+}
+
+func (d *evidenceDAG) countPayloadBindingLocked(key cid.Cid) {
+	encoded := key.KeyString()
+	if _, counted := d.payloadCounted[encoded]; counted {
+		return
+	}
+	verifyNS, verified := d.verifyNSByCID[encoded]
+	if !verified {
+		return
+	}
+	d.payloadCounted[encoded] = struct{}{}
+	d.payloadBindingNS += verifyNS
+}
+
 func (d *evidenceDAG) GetMany(ctx context.Context, keys []cid.Cid) <-chan *ipld.NodeOption {
-	results := make(chan *ipld.NodeOption)
-	go func() {
-		defer close(results)
-		for _, key := range keys {
-			node, err := d.Get(ctx, key)
-			select {
-			case results <- &ipld.NodeOption{Node: node, Err: err}:
-			case <-ctx.Done():
-				return
-			}
+	results := make(chan *ipld.NodeOption, len(keys))
+	defer close(results)
+	for _, key := range keys {
+		if ctx.Err() != nil {
+			break
 		}
-	}()
+		node, err := d.Get(ctx, key)
+		results <- &ipld.NodeOption{Node: node, Err: err}
+	}
 	return results
 }
 
@@ -217,120 +278,36 @@ func (d *evidenceDAG) RemoveMany(context.Context, []cid.Cid) error {
 	return errors.New("evidence DAG is read-only")
 }
 
-func (d *evidenceDAG) requireAllReachable(rawRoot string) error {
-	root, err := cid.Parse(rawRoot)
-	if err != nil {
-		return err
-	}
-	queue := []cid.Cid{root}
-	reachable := make(map[string]bool, len(d.blocks))
-	for len(queue) > 0 {
-		key := queue[0]
-		queue = queue[1:]
-		keyString := key.KeyString()
-		if reachable[keyString] {
-			continue
-		}
-		block, ok := d.blocks[keyString]
-		if !ok {
-			continue
-		}
-		reachable[keyString] = true
-		links, err := evidenceBlockLinks(block)
-		if err != nil {
-			return err
-		}
-		for _, link := range links {
-			if _, present := d.blocks[link.KeyString()]; present && !reachable[link.KeyString()] {
-				queue = append(queue, link)
-			}
-		}
-	}
+// requireAllUsed rejects blocks that were not needed to replay the selected
+// path and payload. Reachability from the root is insufficient: a gateway
+// could otherwise attach unrelated siblings from a large DAG and turn a
+// selective read into an unbounded disclosure or accounting ambiguity.
+func (d *evidenceDAG) requireAllUsed() error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	for key := range d.blocks {
-		if reachable[key] {
+		if d.used[key] {
 			continue
 		}
 		parsed, err := cid.Cast([]byte(key))
 		if err != nil {
-			return fmt.Errorf("Merkle-DAG evidence contains an unreachable block")
+			return fmt.Errorf("Merkle-DAG evidence contains an unused block")
 		}
-		return fmt.Errorf("Merkle-DAG evidence contains unreachable block %s", parsed)
+		return fmt.Errorf("Merkle-DAG evidence contains unused block %s", parsed)
 	}
 	return nil
 }
 
-func evidenceBlockLinks(block blocks.Block) ([]cid.Cid, error) {
-	switch block.Cid().Type() {
-	case cid.Raw:
-		return nil, nil
-	case cid.DagProtobuf:
-		node, err := merkledag.DecodeProtobufBlock(block)
-		if err != nil {
-			return nil, err
-		}
-		links := node.Links()
-		out := make([]cid.Cid, 0, len(links))
-		for _, link := range links {
-			out = append(out, link.Cid)
-		}
-		return out, nil
-	case cid.DagCBOR, cid.DagJSON:
-		builder := basicnode.Prototype.Any.NewBuilder()
-		var decode func(datamodel.NodeAssembler, io.Reader) error
-		if block.Cid().Type() == cid.DagCBOR {
-			decode = dagcbor.Decode
-		} else {
-			decode = dagjson.Decode
-		}
-		if err := decode(builder, bytes.NewReader(block.RawData())); err != nil {
-			return nil, fmt.Errorf("decode linked IPLD evidence: %w", err)
-		}
-		var out []cid.Cid
-		if err := appendIPLDLinks(builder.Build(), &out); err != nil {
-			return nil, err
-		}
-		return out, nil
-	default:
-		return nil, fmt.Errorf("unsupported Merkle-DAG evidence codec %d", block.Cid().Type())
-	}
+func (d *evidenceDAG) blockLoadCount() uint64 {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.loadCalls
 }
 
-func appendIPLDLinks(node datamodel.Node, out *[]cid.Cid) error {
-	switch node.Kind() {
-	case datamodel.Kind_Link:
-		link, err := node.AsLink()
-		if err != nil {
-			return err
-		}
-		value, ok := link.(cidlink.Link)
-		if !ok {
-			return fmt.Errorf("DAG-CBOR evidence link is not a CID")
-		}
-		*out = append(*out, value.Cid)
-	case datamodel.Kind_Map:
-		iterator := node.MapIterator()
-		for !iterator.Done() {
-			_, value, err := iterator.Next()
-			if err != nil {
-				return err
-			}
-			if err := appendIPLDLinks(value, out); err != nil {
-				return err
-			}
-		}
-	case datamodel.Kind_List:
-		iterator := node.ListIterator()
-		for !iterator.Done() {
-			_, value, err := iterator.Next()
-			if err != nil {
-				return err
-			}
-			if err := appendIPLDLinks(value, out); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
+func (d *evidenceDAG) verificationDurations() (cidVerifyNS, payloadBindingNS uint64) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.cidVerifyNS, d.payloadBindingNS
 }
 
 func merkleDAGNodeKind(key cid.Cid, node ipld.Node) string {
