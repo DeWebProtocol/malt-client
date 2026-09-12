@@ -446,10 +446,17 @@ func (b *runtimeWritableBinding) Sync(ctx context.Context) (filesystemmount.Sync
 }
 
 func validCandidateRoot(base, candidate cid.Cid) bool {
-	return base.Defined() && candidate.Defined() && !candidate.Equals(base) &&
-		maltcid.SemanticKindOf(candidate) == maltcid.SemanticKindMap &&
-		maltcid.BackendKindOf(candidate) == maltcid.BackendKindOf(base) &&
-		maltcid.VersionIDOf(candidate) == maltcid.MALTVersionID
+	if !base.Defined() || !candidate.Defined() || candidate.Equals(base) {
+		return false
+	}
+	next, _, err := maltcid.ParseRoot(candidate)
+	if err != nil || next.Layout != maltcid.Prefix {
+		return false
+	}
+	if old, _, err := maltcid.ParseRoot(base); err == nil {
+		return old == next
+	}
+	return maltcid.SemanticKindOf(base) == maltcid.SemanticKindMap && maltcid.BackendKindOf(base) == maltcid.BackendKindOf(candidate) && next.InputRule == 1
 }
 
 func (b *runtimeWritableBinding) Close() error {
