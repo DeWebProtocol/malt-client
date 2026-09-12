@@ -123,3 +123,15 @@ type DatasetBranch interface {
 	ObserveHead(context.Context) (*ObservedHead, error)
 	ApplyCandidate(context.Context, ApplyRequest) (*ApplyResult, error)
 }
+
+// Authentication exposes typed V=0 queries with untrusted proof results.
+type Authentication interface {
+	Authenticate(context.Context, protocol.AuthenticationRequest) (*protocol.AuthenticationResult, error)
+}
+
+// AuthenticationWriter transfers complete candidate materialization. It has
+// no authority to publish or accept a root.
+type AuthenticationWriter interface {
+	AuthenticationCandidate(context.Context, cid.Cid) (*protocol.AuthenticationCandidate, error)
+	MaterializeAuthentication(context.Context, protocol.AuthenticationCandidate) (cid.Cid, error)
+}

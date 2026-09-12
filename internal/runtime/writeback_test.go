@@ -672,7 +672,11 @@ func runtimeMALTMapRoot(t *testing.T, backend maltcid.BackendKind, marker byte) 
 	for index := range commitment {
 		commitment[index] = marker + byte(index)
 	}
-	root, err := maltcid.NewTypedCID(maltcid.SemanticKindMap, backend, commitment)
+	profile := maltcid.KZG4096
+	if backend == maltcid.BackendKindIPA {
+		profile = maltcid.IPA256
+	}
+	root, err := maltcid.NewRoot(maltcid.RootDescriptor{Layout: maltcid.Prefix, InputRule: 1, Profile: profile}, commitment)
 	if err != nil {
 		t.Fatal(err)
 	}
